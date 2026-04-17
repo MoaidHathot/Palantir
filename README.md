@@ -152,6 +152,19 @@ palantir -t "Article" -m "New blog post" --launch "https://example.com/blog"
 palantir -t "Download" -m "Starting..." --tag "download-1" --group "downloads"
 ```
 
+### Quiet Mode
+
+```bash
+# Suppress informational output
+palantir -t "Hello" -m "World" --quiet
+
+# Short form
+palantir -t "Hello" -m "World" -q
+
+# Also works with subcommands
+palantir clear -q
+```
+
 ### Clear History
 
 ```bash
@@ -188,6 +201,7 @@ Options:
   --tag                    Toast tag for updates
   --group                  Toast group for updates
   --launch                 URI to open on toast click
+  -q, --quiet              Suppress informational output
 
 Commands:
   clear                    Clear all toast notification history

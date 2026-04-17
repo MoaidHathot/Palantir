@@ -95,6 +95,11 @@ var groupOption = new Option<string?>("--group")
 var launchUriOption = new Option<string?>("--launch")
 { Description = "URI to open when the toast body is clicked" };
 
+// ── Output ─────────────────────────────────────────────────────────
+
+var quietOption = new Option<bool>("--quiet", "-q")
+{ Description = "Suppress informational output (e.g. \"Toast notification sent.\")", Recursive = true };
+
 // ── Root Command ────────────────────────────────────────────────────
 
 var rootCommand = new RootCommand("Palantir - Windows Toast Notification CLI tool")
@@ -107,15 +112,17 @@ var rootCommand = new RootCommand("Palantir - Windows Toast Notification CLI too
     progressTitleOption, progressValueOption, progressValueStringOption, progressStatusOption,
     appIdOption, tagOption, groupOption,
     launchUriOption,
+    quietOption,
 };
 
 // ── Clear subcommand ────────────────────────────────────────────────
 
 var clearCommand = new Command("clear") { Description = "Clear all toast notification history" };
-clearCommand.SetAction(_ =>
+clearCommand.SetAction(parseResult =>
 {
     ToastService.ClearHistory();
-    Console.WriteLine("Toast notification history cleared.");
+    if (!parseResult.GetValue(quietOption))
+        Console.WriteLine("Toast notification history cleared.");
 });
 rootCommand.Subcommands.Add(clearCommand);
 
@@ -164,7 +171,8 @@ rootCommand.SetAction(parseResult =>
     try
     {
         ToastService.Show(options);
-        Console.WriteLine("Toast notification sent.");
+        if (!parseResult.GetValue(quietOption))
+            Console.WriteLine("Toast notification sent.");
     }
     catch (Exception ex)
     {
