@@ -518,6 +518,10 @@ Commands:
 
 See [EXAMPLES.md](EXAMPLES.md) for a comprehensive guide with copy-paste-ready commands covering every feature, real-world scenarios, and PowerShell scripting patterns.
 
+## Agent Skill
+
+An [Agent Skill](https://agentskills.io) is bundled in `Skills/palantir-notifications/` so AI coding agents can learn how to use Palantir. Point your agent's skill directory at it, and it will know how to send notifications, capture user input, track progress, and integrate with your scripts.
+
 ## License
 
 [Unlicense](LICENSE) - Public Domain
