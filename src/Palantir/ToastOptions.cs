@@ -34,7 +34,11 @@ public sealed class ToastOptions
     // ── Buttons & Inputs ────────────────────────────────────────────
 
     /// <summary>
-    /// Buttons to add. Each entry is either "Label" (dismiss) or "Label;uri" (protocol activation).
+    /// Buttons to add. Formats:
+    ///   "Label" or "Label;dismiss" — dismiss button
+    ///   "Label;submit" — foreground activation (captures user input)
+    ///   "Label;uri" — protocol activation (opens URI)
+    ///   "label=X,action=submit" — structured key-value format
     /// </summary>
     public string[] Buttons { get; set; } = [];
 
@@ -128,6 +132,9 @@ public sealed class ToastOptions
 
     /// <summary>Block until the toast is dismissed or activated.</summary>
     public bool Wait { get; set; }
+
+    /// <summary>Timeout in seconds for --wait (null = wait indefinitely).</summary>
+    public int? Timeout { get; set; }
 
     /// <summary>Output the toast XML without displaying it.</summary>
     public bool DryRun { get; set; }

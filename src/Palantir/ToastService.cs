@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Xml.Linq;
 using Microsoft.Toolkit.Uwp.Notifications;
 using Windows.UI.Notifications;
 
@@ -34,7 +35,8 @@ public static class ToastService
     /// <summary>
     /// Show a toast and wait for user interaction. Returns the result as JSON-serializable object.
     /// </summary>
-    public static WaitResult ShowAndWait(ToastOptions options, Action<string>? onWarning = null)
+    public static WaitResult ShowAndWait(
+        ToastOptions options, int? timeoutSeconds = null, Action<string>? onWarning = null)
     {
         var builder = BuildToast(options, onWarning);
         var waitHandle = new ManualResetEventSlim(false);
@@ -106,8 +108,14 @@ public static class ToastService
             };
         });
 
-        waitHandle.Wait();
-        return result ?? new WaitResult { Action = "unknown" };
+        waitHandle.Wait(timeoutSeconds.HasValue
+            ? TimeSpan.FromSeconds(timeoutSeconds.Value)
+            : Timeout.InfiniteTimeSpan);
+
+        if (result is null)
+            result = new WaitResult { Action = "timedOut" };
+
+        return result;
     }
 
     /// <summary>
@@ -187,6 +195,44 @@ public static class ToastService
         ToastNotificationManagerCompat.History.Clear();
     }
 
+    /// <summary>
+    /// Get the list of active toast notifications for this app.
+    /// </summary>
+    public static IReadOnlyList<HistoryEntry> GetHistory()
+    {
+        var toasts = ToastNotificationManagerCompat.History.GetHistory();
+        var entries = new List<HistoryEntry>();
+
+        foreach (var toast in toasts)
+        {
+            var xmlString = toast.Content.GetXml();
+            var texts = new List<string>();
+
+            try
+            {
+                var doc = XDocument.Parse(xmlString);
+                texts = doc.Descendants("text")
+                    .Select(t => t.Value)
+                    .Where(t => !string.IsNullOrWhiteSpace(t))
+                    .ToList();
+            }
+            catch
+            {
+                // If XML parsing fails, just skip text extraction
+            }
+
+            entries.Add(new HistoryEntry
+            {
+                Tag = string.IsNullOrEmpty(toast.Tag) ? null : toast.Tag,
+                Group = string.IsNullOrEmpty(toast.Group) ? null : toast.Group,
+                Texts = texts,
+                ExpirationTime = toast.ExpirationTime,
+            });
+        }
+
+        return entries;
+    }
+
     // ── Private Helpers ─────────────────────────────────────────────
 
     private static ToastContentBuilder BuildToast(ToastOptions options, Action<string>? onWarning)
@@ -231,36 +277,7 @@ public static class ToastService
         // ── Buttons ─────────────────────────────────────────────────
         foreach (var buttonSpec in options.Buttons)
         {
-            var parts = buttonSpec.Split(';', 2);
-            var label = parts[0].Trim();
-
-            if (string.IsNullOrWhiteSpace(label))
-            {
-                onWarning?.Invoke($"Warning: Ignoring button with empty label: \"{buttonSpec}\"");
-                continue;
-            }
-
-            if (parts.Length == 2 && !string.IsNullOrWhiteSpace(parts[1]))
-            {
-                var action = parts[1].Trim();
-                if (!Uri.TryCreate(action, UriKind.Absolute, out var uri))
-                {
-                    onWarning?.Invoke(
-                        $"Warning: Invalid URI for button \"{label}\": \"{action}\". " +
-                        "Using as dismiss button instead.");
-                    builder.AddButton(new ToastButtonDismiss(label));
-                }
-                else
-                {
-                    builder.AddButton(new ToastButton()
-                        .SetContent(label)
-                        .SetProtocolActivation(uri));
-                }
-            }
-            else
-            {
-                builder.AddButton(new ToastButtonDismiss(label));
-            }
+            AddButton(builder, buttonSpec, onWarning);
         }
 
         // ── Text Inputs ─────────────────────────────────────────────
@@ -527,4 +544,106 @@ public static class ToastService
 
         return map;
     }
+
+    // ── Button Parsing ──────────────────────────────────────────────
+
+    private static void AddButton(
+        ToastContentBuilder builder, string buttonSpec, Action<string>? onWarning)
+    {
+        // Structured format: label=...,action=...
+        if (buttonSpec.StartsWith("label=", StringComparison.OrdinalIgnoreCase))
+        {
+            var props = ParseKeyValuePairs(buttonSpec);
+            if (!props.TryGetValue("label", out var label) || string.IsNullOrWhiteSpace(label))
+            {
+                onWarning?.Invoke($"Warning: Ignoring button with empty label: \"{buttonSpec}\"");
+                return;
+            }
+
+            var action = props.GetValueOrDefault("action") ?? "dismiss";
+            var arguments = props.GetValueOrDefault("arguments");
+            AddButtonByAction(builder, label, action, arguments, onWarning, buttonSpec);
+            return;
+        }
+
+        // Legacy format: "Label" or "Label;action"
+        var parts = buttonSpec.Split(';', 2);
+        var legacyLabel = parts[0].Trim();
+
+        if (string.IsNullOrWhiteSpace(legacyLabel))
+        {
+            onWarning?.Invoke($"Warning: Ignoring button with empty label: \"{buttonSpec}\"");
+            return;
+        }
+
+        if (parts.Length == 2 && !string.IsNullOrWhiteSpace(parts[1]))
+        {
+            AddButtonByAction(builder, legacyLabel, parts[1].Trim(), null, onWarning, buttonSpec);
+        }
+        else
+        {
+            builder.AddButton(new ToastButtonDismiss(legacyLabel));
+        }
+    }
+
+    private static void AddButtonByAction(
+        ToastContentBuilder builder, string label, string action,
+        string? customArguments, Action<string>? onWarning, string originalSpec)
+    {
+        switch (action.ToLowerInvariant())
+        {
+            case "dismiss":
+                builder.AddButton(new ToastButtonDismiss(label));
+                break;
+
+            case "submit":
+                // Foreground activation — triggers Activated event with UserInput
+                builder.AddButton(new ToastButton()
+                    .SetContent(label)
+                    .AddArgument("button", customArguments ?? label));
+                break;
+
+            default:
+                // Try as URI for protocol activation
+                if (Uri.TryCreate(action, UriKind.Absolute, out var uri))
+                {
+                    builder.AddButton(new ToastButton()
+                        .SetContent(label)
+                        .SetProtocolActivation(uri));
+                }
+                else
+                {
+                    onWarning?.Invoke(
+                        $"Warning: Invalid button action \"{action}\" for \"{label}\". " +
+                        "Valid actions: submit, dismiss, or a URI. Using dismiss.");
+                    builder.AddButton(new ToastButtonDismiss(label));
+                }
+                break;
+        }
+    }
+
+    internal static Dictionary<string, string> ParseKeyValuePairs(string spec)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in spec.Split(','))
+        {
+            var eq = pair.IndexOf('=');
+            if (eq > 0)
+            {
+                result[pair[..eq].Trim()] = pair[(eq + 1)..].Trim();
+            }
+        }
+        return result;
+    }
+}
+
+/// <summary>
+/// Represents a toast notification entry from the history.
+/// </summary>
+public sealed class HistoryEntry
+{
+    public string? Tag { get; set; }
+    public string? Group { get; set; }
+    public List<string> Texts { get; set; } = [];
+    public DateTimeOffset? ExpirationTime { get; set; }
 }

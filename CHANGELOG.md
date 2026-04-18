@@ -11,14 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`remove` subcommand** — Remove specific toasts by `--tag` or `--group` from notification history
 - **`update` subcommand** — Update an existing toast's progress bar data without showing a new toast
+- **`history` subcommand** — List active toast notifications with their tags, groups, and content
+- **`test` subcommand** — Send a test notification to verify Palantir is working
 - **`completions` subcommand** — Generate shell completion scripts (PowerShell)
-- **`--wait` flag** — Block until the toast is dismissed or activated; outputs interaction result as JSON to stdout
+- **`--wait` flag** — Block until the toast is dismissed or activated; outputs interaction result to stdout
+- **`--timeout` option** — Timeout in seconds for `--wait` (implies `--wait`); auto-resolves with `"timedOut"` action
+- **`--format` option** — Output format for `--wait`: `json` (default), `text` (key=value lines), or `none` (exit code only)
+- **`--replace` flag** — Replace an existing toast with the same `--tag` (re-shows the popup)
 - **`--dry-run` flag** — Output the toast XML without displaying it, useful for debugging
 - **`--json` option** — Load toast options from a JSON file or stdin (`--json -`)
 - **`--preset` option** — Apply built-in or user-defined preset configurations
 - **`preset` subcommand** — Full preset management: `preset save`, `preset list`, `preset show`, `preset delete`
 - **User-defined presets** — Save custom presets as JSON to a config file; any `ToastOptions` field can be preset
-- **Config file** — Extensible `config.json` with location resolution: `PALANTIR_CONFIG_PATH` env var, `$XDG_CONFIG_HOME/palantir/`, or `%APPDATA%\Palantir\`
+- **Config file** — Extensible `palantir.json` with location resolution: `PALANTIR_CONFIG_PATH` env var, `$XDG_CONFIG_HOME/Palantir/`, or `%APPDATA%\Palantir\`
+- **Submit buttons** — `"Label;submit"` creates foreground activation buttons that capture user input with `--wait`
+- **Structured button syntax** — `"label=X,action=Y"` key-value format as alternative to semicolon format
 - **`--on-click` option** — Execute a shell command when the toast is activated (implies `--wait`)
 - **`--header-id`, `--header-title`, `--header-arguments`** — Group related toasts under a header in Action Center
 - **`--version` flag** — Display the installed version

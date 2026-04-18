@@ -253,6 +253,8 @@ public static class PresetStore
         // ── Int? fields ─────────────────────────────────────────────
         if (!explicitOptions.Contains("expiration") && preset.Expiration.HasValue)
             target.Expiration ??= preset.Expiration;
+        if (!explicitOptions.Contains("timeout") && preset.Timeout.HasValue)
+            target.Timeout ??= preset.Timeout;
 
         // ── Array fields (only apply if preset has values and target is empty) ──
         if (!explicitOptions.Contains("buttons") && preset.Buttons is { Length: > 0 }

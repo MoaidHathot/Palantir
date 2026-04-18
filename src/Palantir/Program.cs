@@ -124,6 +124,15 @@ var presetOption = new Option<string?>("--preset")
 var waitOption = new Option<bool>("--wait")
 { Description = "Block until the toast is dismissed or activated, output result as JSON" };
 
+var timeoutOption = new Option<int?>("--timeout")
+{ Description = "Timeout in seconds for --wait (default: wait indefinitely)" };
+
+var formatOption = new Option<string?>("--format")
+{ Description = "Output format for --wait: json (default), text, or none" };
+
+var replaceOption = new Option<bool>("--replace")
+{ Description = "Replace an existing toast with the same --tag (re-shows the popup)" };
+
 var dryRunOption = new Option<bool>("--dry-run")
 { Description = "Output the toast XML without displaying it" };
 
@@ -151,7 +160,8 @@ var rootCommand = new RootCommand("Palantir - Windows Toast Notification CLI too
     tagOption, groupOption,
     headerIdOption, headerTitleOption, headerArgumentsOption,
     launchUriOption, onClickOption,
-    presetOption, waitOption, dryRunOption, jsonOption, versionOption,
+    presetOption, waitOption, timeoutOption, formatOption, replaceOption,
+    dryRunOption, jsonOption, versionOption,
     quietOption,
 };
 
@@ -316,10 +326,11 @@ completionsCommand.SetAction(parseResult =>
                     '--tag', '--group',
                     '--header-id', '--header-title', '--header-arguments',
                     '--launch', '--on-click',
-                    '--preset', '--wait', '--dry-run', '--json', '--version',
+                    '--preset', '--wait', '--timeout', '--format', '--replace',
+                    '--dry-run', '--json', '--version',
                     '-q', '--quiet'
                 )
-                $subcommands = @('clear', 'remove', 'update', 'completions', 'preset')
+                $subcommands = @('clear', 'remove', 'update', 'completions', 'preset', 'history', 'test')
                 $all = $options + $subcommands
 
                 $all | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
@@ -523,6 +534,69 @@ presetCommand.Subcommands.Add(presetDeleteCommand);
 
 rootCommand.Subcommands.Add(presetCommand);
 
+// ── History subcommand ──────────────────────────────────────────────
+
+var historyCommand = new Command("history") { Description = "List active toast notifications" };
+historyCommand.SetAction(parseResult =>
+{
+    try
+    {
+        var entries = ToastService.GetHistory();
+
+        if (entries.Count == 0)
+        {
+            Console.WriteLine("No active notifications.");
+            return;
+        }
+
+        foreach (var entry in entries)
+        {
+            var tag = entry.Tag ?? "-";
+            var group = entry.Group ?? "-";
+            var content = entry.Texts.Count > 0
+                ? string.Join(" | ", entry.Texts)
+                : "(no text)";
+            var expires = entry.ExpirationTime.HasValue
+                ? $" expires={entry.ExpirationTime.Value:HH:mm:ss}"
+                : "";
+
+            Console.WriteLine($"  tag={tag,-16} group={group,-16} {content}{expires}");
+        }
+
+        Console.WriteLine($"\nTotal: {entries.Count}");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error getting history: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+});
+rootCommand.Subcommands.Add(historyCommand);
+
+// ── Test subcommand ─────────────────────────────────────────────────
+
+var testCommand = new Command("test") { Description = "Send a test notification to verify Palantir is working" };
+testCommand.SetAction(parseResult =>
+{
+    try
+    {
+        ToastService.Show(new ToastOptions
+        {
+            Title = "Palantir",
+            Message = $"Notifications are working! (v{version})",
+            Attribution = "Test notification",
+        });
+        if (!parseResult.GetValue(quietOption))
+            Console.WriteLine("Test notification sent successfully.");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+});
+rootCommand.Subcommands.Add(testCommand);
+
 // ── Root handler ────────────────────────────────────────────────────
 
 rootCommand.SetAction(parseResult =>
@@ -638,6 +712,22 @@ rootCommand.SetAction(parseResult =>
     if (!string.IsNullOrWhiteSpace(options.OnClickCommand))
         options.Wait = true;
 
+    // ── --timeout implies --wait ────────────────────────────────
+    var timeout = parseResult.GetValue(timeoutOption) ?? options.Timeout;
+    if (timeout.HasValue)
+        options.Wait = true;
+
+    // ── --replace requires --tag ────────────────────────────────
+    if (parseResult.GetValue(replaceOption))
+    {
+        if (string.IsNullOrWhiteSpace(options.Tag))
+        {
+            Console.Error.WriteLine("Error: --replace requires --tag to identify the toast to replace.");
+            Environment.ExitCode = 1;
+            return;
+        }
+    }
+
     // ── Validate required options ───────────────────────────────
     if (string.IsNullOrWhiteSpace(options.Title) && string.IsNullOrWhiteSpace(options.Message)
         && !options.DryRun)
@@ -669,8 +759,26 @@ rootCommand.SetAction(parseResult =>
 
         if (options.Wait)
         {
-            var result = ToastService.ShowAndWait(options, onWarning);
-            Console.WriteLine(result.ToJson());
+            var result = ToastService.ShowAndWait(options, timeout, onWarning);
+
+            // Output result in requested format
+            var format = parseResult.GetValue(formatOption)?.ToLowerInvariant() ?? "json";
+            switch (format)
+            {
+                case "json":
+                    Console.WriteLine(result.ToJson());
+                    break;
+                case "text":
+                    Console.WriteLine(result.ToText());
+                    break;
+                case "none":
+                    break;
+                default:
+                    onWarning?.Invoke(
+                        $"Warning: Unknown format \"{format}\". Valid: json, text, none. Using json.");
+                    Console.WriteLine(result.ToJson());
+                    break;
+            }
 
             // Execute on-click command if toast was activated
             if (result.Action == "activated" &&
@@ -700,7 +808,8 @@ rootCommand.SetAction(parseResult =>
                 "dismissed" => 1,
                 "failed" => 2,
                 "cancelled" => 3,
-                _ => 4,
+                "timedOut" => 4,
+                _ => 5,
             };
             return;
         }
@@ -768,6 +877,7 @@ ToastOptions BuildOptionsFromCli(ParseResult parseResult)
         OnClickCommand = parseResult.GetValue(onClickOption),
         Preset = parseResult.GetValue(presetOption),
         Wait = parseResult.GetValue(waitOption),
+        Timeout = parseResult.GetValue(timeoutOption),
         DryRun = parseResult.GetValue(dryRunOption),
     };
 }
@@ -865,6 +975,8 @@ void OverrideFromCli(ToastOptions options, ParseResult parseResult)
     if (cliPreset is not null) options.Preset = cliPreset;
 
     if (parseResult.GetValue(waitOption)) options.Wait = true;
+    var cliTimeout = parseResult.GetValue(timeoutOption);
+    if (cliTimeout.HasValue) options.Timeout = cliTimeout;
     if (parseResult.GetValue(dryRunOption)) options.DryRun = true;
 }
 
@@ -904,6 +1016,7 @@ HashSet<string> GetExplicitOptions(ParseResult parseResult)
 
     // Int? options
     if (parseResult.GetValue(expirationOption).HasValue) explicit_.Add("expiration");
+    if (parseResult.GetValue(timeoutOption).HasValue) explicit_.Add("timeout");
 
     // Array options — explicitly provided if non-empty
     if (parseResult.GetValue(buttonOption) is { Length: > 0 }) explicit_.Add("buttons");

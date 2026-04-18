@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -14,11 +15,11 @@ public sealed class WaitResult
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    /// <summary>The action that occurred: "activated", "dismissed", "failed", or "cancelled".</summary>
+    /// <summary>The action that occurred: "activated", "dismissed", "failed", "cancelled", or "timedOut".</summary>
     [JsonPropertyName("action")]
     public string Action { get; set; } = "";
 
-    /// <summary>Activation arguments (e.g. button protocol URI).</summary>
+    /// <summary>Activation arguments (e.g. button label for submit buttons).</summary>
     [JsonPropertyName("arguments")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Arguments { get; set; }
@@ -40,4 +41,20 @@ public sealed class WaitResult
 
     /// <summary>Serialize this result to a JSON string.</summary>
     public string ToJson() => JsonSerializer.Serialize(this, SerializerOptions);
+
+    /// <summary>Serialize this result to key=value text lines.</summary>
+    public string ToText()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"action={Action}");
+        if (Arguments is not null) sb.AppendLine($"arguments={Arguments}");
+        if (Reason is not null) sb.AppendLine($"reason={Reason}");
+        if (Error is not null) sb.AppendLine($"error={Error}");
+        if (UserInputs is not null)
+        {
+            foreach (var (key, value) in UserInputs)
+                sb.AppendLine($"input.{key}={value}");
+        }
+        return sb.ToString().TrimEnd();
+    }
 }

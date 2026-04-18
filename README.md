@@ -22,7 +22,12 @@ palantir -t "Build Complete" -m "All tests passed" --attribution "Via CI Pipelin
 
 # Pipe command output into a toast
 git log -1 --oneline | palantir -t "Latest Commit" -m -
+
+# Verify the tool works
+palantir test
 ```
+
+> See [EXAMPLES.md](EXAMPLES.md) for a comprehensive, copy-paste-ready guide to every feature.
 
 ## Features
 
@@ -73,14 +78,30 @@ palantir -t "News" -m "Breaking" --hero-image "https://example.com/banner.jpg"
 # Dismiss button
 palantir -t "Info" -m "Noted" --button "OK"
 
+# Submit button (foreground activation — captures user input with --wait)
+palantir -t "Reply" --input "reply;Type here..." --button "Send;submit" --wait
+# Output: {"action":"activated","arguments":"button=Send","userInputs":{"reply":"hello"}}
+
 # Protocol activation (opens URL/app)
-palantir -t "Update" -m "New version available" --button "Download;https://example.com" --button "Later"
+palantir -t "Update" -m "New version" --button "Download;https://example.com" --button "Later"
 
 # Multiple buttons
 palantir -t "Call" -m "Incoming" --button "Answer;tel:+123" --button "Decline"
+
+# Structured key-value format (alternative syntax)
+palantir -t "Confirm" --button "label=Yes,action=submit" --button "label=No,action=dismiss"
+palantir -t "Open" --button "label=View,action=https://example.com"
 ```
 
-Format: `"Label"` for dismiss, or `"Label;uri"` for protocol activation.
+**Button formats:**
+
+| Format | Example | Behavior |
+|---|---|---|
+| `"Label"` | `"OK"` | Dismiss button |
+| `"Label;dismiss"` | `"Cancel;dismiss"` | Dismiss (explicit) |
+| `"Label;submit"` | `"Send;submit"` | Foreground activation (captures inputs) |
+| `"Label;uri"` | `"Open;https://..."` | Protocol activation (opens URI) |
+| `"label=X,action=Y"` | `"label=OK,action=submit"` | Structured key-value format |
 
 ### Input Fields
 
@@ -235,17 +256,51 @@ palantir -t "Article" -m "New blog post" --launch "https://example.com/blog"
 
 ### Wait for Interaction
 
-Block until the user interacts with the toast. The result is output as JSON to stdout.
+Block until the user interacts with the toast. The result is output to stdout.
 
 ```bash
-# Wait and capture result
-palantir -t "Deploy?" -m "Push to production?" --button "Yes" --button "No" --wait
-# Output: {"action":"activated","arguments":"..."}
-# Exit codes: 0=activated, 1=dismissed, 2=failed, 3=cancelled
+# Wait and capture result (JSON by default)
+palantir -t "Deploy?" -m "Push to production?" --button "Yes;submit" --button "No" --wait
+# Output: {"action":"activated","arguments":"button=Yes"}
+# Exit codes: 0=activated, 1=dismissed, 2=failed, 3=cancelled, 4=timedOut
 
-# Use in scripts
-$result = palantir -t "Confirm" --button "OK" --wait | ConvertFrom-Json
-if ($result.action -eq "activated") { Write-Host "User confirmed!" }
+# With timeout (auto-resolves after N seconds)
+palantir -t "Confirm" --button "OK;submit" --wait --timeout 30
+# Output if timed out: {"action":"timedOut"}
+
+# Text format for easy shell parsing
+palantir -t "Reply" --input "msg;Type here" --button "Send;submit" --wait --format text
+# Output:
+# action=activated
+# arguments=button=Send
+# input.msg=hello world
+
+# No output, just exit code
+palantir -t "Proceed?" --button "Yes;submit" --wait --format none --timeout 10
+if ($LASTEXITCODE -eq 0) { Write-Host "User confirmed!" }
+
+# Capture form input
+$result = palantir -t "Quick Reply" -m "From: John" `
+  --input "reply;Type your reply..." `
+  --selection "priority;Low,Normal,High" `
+  --button "Send;submit" --button "Ignore" --wait | ConvertFrom-Json
+if ($result.action -eq "activated") {
+    Write-Host "Reply: $($result.userInputs.reply)"
+    Write-Host "Priority: $($result.userInputs.priority)"
+}
+```
+
+### Replace an Existing Toast
+
+Re-show a toast with entirely new content (requires `--tag`):
+
+```bash
+# Show initial toast
+palantir -t "Step 1 of 3" -m "Preparing..." --tag "wizard"
+
+# Replace with new content (re-pops the notification)
+palantir -t "Step 2 of 3" -m "Building..." --tag "wizard" --replace
+palantir -t "Step 3 of 3" -m "Done!" --tag "wizard" --replace
 ```
 
 ### On-Click Command
@@ -299,6 +354,24 @@ palantir remove --group "downloads"
 
 ```bash
 palantir clear
+```
+
+### View Active Notifications
+
+```bash
+palantir history
+#   tag=dl-1             group=-                Downloading | file.zip
+#   tag=build-1          group=ci               Build Complete | All tests passed
+#
+# Total: 2
+```
+
+### Test Notification
+
+Verify Palantir is working correctly:
+
+```bash
+palantir test
 ```
 
 ### JSON Input
@@ -395,7 +468,7 @@ Options:
   --crop-circle            Crop the app logo as a circle
   --hero-image             Hero image at the top of the toast
   --inline-image           Inline image in the toast body
-  --button                 Button: "Label" or "Label;uri"
+  --button                 Button: "Label", "Label;submit", "Label;uri", or key-value
   --input                  Text input: "id" or "id;placeholder"
   --selection              Selection box: "id;Option A,Option B,Option C"
   -a, --audio              Audio sound name or file path
@@ -417,7 +490,10 @@ Options:
   --launch                 URI to open on toast click
   --on-click               Shell command to run on activation (implies --wait)
   --preset                 Apply a named preset (use 'palantir preset list')
-  --wait                   Block until interaction, output result as JSON
+  --wait                   Block until interaction, output result
+  --timeout                Timeout in seconds for --wait
+  --format                 Output format for --wait: json, text, or none
+  --replace                Replace existing toast with same --tag
   --dry-run                Output toast XML without displaying
   --json                   Load options from JSON file (use "-" for stdin)
   --version                Show version information
@@ -428,6 +504,8 @@ Commands:
   remove                   Remove specific toasts (--tag or --group)
   update                   Update an existing toast's progress data
   preset                   Manage presets (save, list, show, delete)
+  history                  List active toast notifications
+  test                     Send a test notification
   completions              Generate shell completion scripts
 ```
 
@@ -435,6 +513,10 @@ Commands:
 
 - Windows 10 (build 17763) or later
 - .NET 10 SDK
+
+## More Examples
+
+See [EXAMPLES.md](EXAMPLES.md) for a comprehensive guide with copy-paste-ready commands covering every feature, real-world scenarios, and PowerShell scripting patterns.
 
 ## License
 

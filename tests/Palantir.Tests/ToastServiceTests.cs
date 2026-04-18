@@ -247,7 +247,7 @@ public class ToastServiceTests
         var xml = ToastService.GetXml(options, w => warnings.Add(w));
 
         Assert.Single(warnings);
-        Assert.Contains("Invalid URI for button", warnings[0]);
+        Assert.Contains("Invalid button action", warnings[0]);
     }
 
     [Fact]
@@ -362,5 +362,154 @@ public class ToastServiceTests
     public void DefaultProgressStatus_HasExpectedValue()
     {
         Assert.Equal("In progress", ToastService.DefaultProgressStatus);
+    }
+
+    // ── Button Parsing (submit action) ──────────────────────────────
+
+    [Fact]
+    public void GetXml_SubmitButton_IncludesArguments()
+    {
+        var options = new ToastOptions
+        {
+            Title = "Reply",
+            Buttons = ["Send;submit"],
+        };
+
+        var xml = ToastService.GetXml(options);
+
+        Assert.Contains("Send", xml);
+        // Submit buttons include arguments (used for foreground activation)
+        Assert.Contains("arguments", xml);
+    }
+
+    [Fact]
+    public void GetXml_DismissButton_ExplicitKeyword()
+    {
+        var options = new ToastOptions
+        {
+            Title = "Test",
+            Buttons = ["Cancel;dismiss"],
+        };
+
+        var xml = ToastService.GetXml(options);
+
+        Assert.Contains("Cancel", xml);
+    }
+
+    [Fact]
+    public void GetXml_StructuredButton_ParsesCorrectly()
+    {
+        var options = new ToastOptions
+        {
+            Title = "Test",
+            Buttons = ["label=Send,action=submit"],
+        };
+
+        var xml = ToastService.GetXml(options);
+
+        Assert.Contains("Send", xml);
+        Assert.Contains("arguments", xml);
+    }
+
+    [Fact]
+    public void GetXml_StructuredButton_CustomArguments()
+    {
+        var options = new ToastOptions
+        {
+            Title = "Test",
+            Buttons = ["label=Reply,action=submit,arguments=send-reply"],
+        };
+
+        var xml = ToastService.GetXml(options);
+
+        Assert.Contains("Reply", xml);
+        Assert.Contains("send-reply", xml);
+    }
+
+    [Fact]
+    public void GetXml_InvalidAction_WarnsAndDismisses()
+    {
+        var warnings = new List<string>();
+        var options = new ToastOptions
+        {
+            Title = "Test",
+            Buttons = ["Click;not-valid"],
+        };
+
+        var xml = ToastService.GetXml(options, w => warnings.Add(w));
+
+        Assert.Single(warnings);
+        Assert.Contains("Invalid button action", warnings[0]);
+    }
+
+    // ── ParseKeyValuePairs ──────────────────────────────────────────
+
+    [Fact]
+    public void ParseKeyValuePairs_BasicParsing()
+    {
+        var result = ToastService.ParseKeyValuePairs("label=Send,action=submit");
+
+        Assert.Equal("Send", result["label"]);
+        Assert.Equal("submit", result["action"]);
+    }
+
+    [Fact]
+    public void ParseKeyValuePairs_WithArguments()
+    {
+        var result = ToastService.ParseKeyValuePairs("label=OK,action=submit,arguments=confirm");
+
+        Assert.Equal("OK", result["label"]);
+        Assert.Equal("submit", result["action"]);
+        Assert.Equal("confirm", result["arguments"]);
+    }
+
+    [Fact]
+    public void ParseKeyValuePairs_CaseInsensitiveKeys()
+    {
+        var result = ToastService.ParseKeyValuePairs("Label=Test,Action=dismiss");
+
+        Assert.True(result.ContainsKey("label"));
+        Assert.True(result.ContainsKey("action"));
+    }
+
+    // ── WaitResult.ToText ───────────────────────────────────────────
+
+    [Fact]
+    public void WaitResult_ToText_BasicFormat()
+    {
+        var result = new WaitResult { Action = "activated" };
+        var text = result.ToText();
+
+        Assert.Equal("action=activated", text);
+    }
+
+    [Fact]
+    public void WaitResult_ToText_WithAllFields()
+    {
+        var result = new WaitResult
+        {
+            Action = "activated",
+            Arguments = "Send",
+            UserInputs = new Dictionary<string, string> { ["reply"] = "hello" },
+        };
+        var text = result.ToText();
+
+        Assert.Contains("action=activated", text);
+        Assert.Contains("arguments=Send", text);
+        Assert.Contains("input.reply=hello", text);
+    }
+
+    [Fact]
+    public void WaitResult_ToText_Dismissed()
+    {
+        var result = new WaitResult
+        {
+            Action = "dismissed",
+            Reason = "UserCanceled",
+        };
+        var text = result.ToText();
+
+        Assert.Contains("action=dismissed", text);
+        Assert.Contains("reason=UserCanceled", text);
     }
 }
