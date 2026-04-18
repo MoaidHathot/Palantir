@@ -70,7 +70,7 @@ public sealed class ToastOptions
     public string? Duration { get; set; }
 
     /// <summary>
-    /// Toast scenario: "default", "alarm", "reminder", "incomingCall", or "urgent".
+    /// Toast scenario: "default", "alarm", "reminder", or "incomingCall".
     /// </summary>
     public string? Scenario { get; set; }
 
@@ -96,17 +96,39 @@ public sealed class ToastOptions
 
     // ── Identity ────────────────────────────────────────────────────
 
-    /// <summary>Application User Model ID (AUMID) for the toast source.</summary>
-    public string? AppId { get; set; }
-
     /// <summary>Toast tag for identifying/updating toasts.</summary>
     public string? Tag { get; set; }
 
     /// <summary>Toast group for organizing/updating toasts.</summary>
     public string? Group { get; set; }
 
+    // ── Header ──────────────────────────────────────────────────────
+
+    /// <summary>Header ID for grouping related toasts in Action Center.</summary>
+    public string? HeaderId { get; set; }
+
+    /// <summary>Header display title.</summary>
+    public string? HeaderTitle { get; set; }
+
+    /// <summary>Header activation arguments.</summary>
+    public string? HeaderArguments { get; set; }
+
     // ── Launch ──────────────────────────────────────────────────────
 
     /// <summary>Launch URI when the toast body is clicked.</summary>
     public string? LaunchUri { get; set; }
+
+    /// <summary>Shell command to execute when the toast is activated (implies --wait).</summary>
+    public string? OnClickCommand { get; set; }
+
+    // ── Behavior Flags ──────────────────────────────────────────────
+
+    /// <summary>Preset to apply (alarm, reminder, call).</summary>
+    public string? Preset { get; set; }
+
+    /// <summary>Block until the toast is dismissed or activated.</summary>
+    public bool Wait { get; set; }
+
+    /// <summary>Output the toast XML without displaying it.</summary>
+    public bool DryRun { get; set; }
 }

@@ -8,7 +8,8 @@
     <Nullable>enable</Nullable>
     <LangVersion>13</LangVersion>
     <!-- NU1904: System.Drawing.Common 4.7.0 vulnerability — transitive dep from
-         Microsoft.Toolkit.Uwp.Notifications; not used directly by this project. -->
+         Microsoft.Toolkit.Uwp.Notifications; not used directly by this project.
+         No replacement package exists; the vulnerability is not exploitable here. -->
     <NoWarn>$(NoWarn);NU1904</NoWarn>
 
     <!-- .NET Tool Configuration -->
@@ -29,6 +30,10 @@
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Palantir.Tests" />
   </ItemGroup>
 
   <ItemGroup>

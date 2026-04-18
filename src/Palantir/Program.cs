@@ -1,5 +1,15 @@
+using System.Diagnostics;
+using System.Reflection;
+using System.Text.Json;
 using System.CommandLine;
 using Palantir;
+using Windows.UI.Notifications;
+
+// ── Version ────────────────────────────────────────────────────────
+
+var version = typeof(ToastService).Assembly
+    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+    ?.InformationalVersion ?? "0.0.0";
 
 // ── Text Content ────────────────────────────────────────────────────
 
@@ -7,10 +17,10 @@ var titleOption = new Option<string?>("--title", "-t")
 { Description = "Toast title text (first line, bold)" };
 
 var messageOption = new Option<string?>("--message", "-m")
-{ Description = "Toast body message text (second line)" };
+{ Description = "Toast body message text (second line). Use \"-\" to read from stdin" };
 
 var bodyOption = new Option<string?>("--body", "-b")
-{ Description = "Additional body text (third line)" };
+{ Description = "Additional body text (third line). Use \"-\" to read from stdin" };
 
 var attributionOption = new Option<string?>("--attribution")
 { Description = "Attribution text shown at the bottom (e.g. \"Via Palantir\")" };
@@ -42,10 +52,10 @@ var selectionOption = new Option<string[]>("--selection")
 
 // ── Audio ───────────────────────────────────────────────────────────
 
-var audioOption = new Option<string?>("--audio")
+var audioOption = new Option<string?>("--audio", "-a")
 { Description = "Audio sound name (default, im, mail, reminder, sms, alarm, call, etc.) or file path" };
 
-var silentOption = new Option<bool>("--silent")
+var silentOption = new Option<bool>("--silent", "-s")
 { Description = "Suppress all audio (silent notification)" };
 
 var loopOption = new Option<bool>("--loop")
@@ -81,19 +91,47 @@ var progressStatusOption = new Option<string?>("--progress-status")
 
 // ── Identity ────────────────────────────────────────────────────────
 
-var appIdOption = new Option<string?>("--app-id")
-{ Description = "Application User Model ID (AUMID) for the toast source" };
-
 var tagOption = new Option<string?>("--tag")
 { Description = "Toast tag for identifying and updating toasts" };
 
 var groupOption = new Option<string?>("--group")
 { Description = "Toast group for organizing and updating toasts" };
 
+// ── Header ──────────────────────────────────────────────────────────
+
+var headerIdOption = new Option<string?>("--header-id")
+{ Description = "Header ID for grouping related toasts in Action Center" };
+
+var headerTitleOption = new Option<string?>("--header-title")
+{ Description = "Header display title (defaults to header ID)" };
+
+var headerArgumentsOption = new Option<string?>("--header-arguments")
+{ Description = "Header activation arguments" };
+
 // ── Launch ──────────────────────────────────────────────────────────
 
 var launchUriOption = new Option<string?>("--launch")
 { Description = "URI to open when the toast body is clicked" };
+
+var onClickOption = new Option<string?>("--on-click")
+{ Description = "Shell command to execute when the toast is activated (implies --wait)" };
+
+// ── Advanced ────────────────────────────────────────────────────────
+
+var presetOption = new Option<string?>("--preset")
+{ Description = "Apply a preset (use 'palantir preset list' to see available presets)" };
+
+var waitOption = new Option<bool>("--wait")
+{ Description = "Block until the toast is dismissed or activated, output result as JSON" };
+
+var dryRunOption = new Option<bool>("--dry-run")
+{ Description = "Output the toast XML without displaying it" };
+
+var jsonOption = new Option<string?>("--json")
+{ Description = "Load toast options from a JSON file (use \"-\" for stdin)" };
+
+var versionOption = new Option<bool>("--version")
+{ Description = "Show version information" };
 
 // ── Output ─────────────────────────────────────────────────────────
 
@@ -110,8 +148,10 @@ var rootCommand = new RootCommand("Palantir - Windows Toast Notification CLI too
     audioOption, silentOption, loopOption,
     durationOption, scenarioOption, expirationOption, timestampOption,
     progressTitleOption, progressValueOption, progressValueStringOption, progressStatusOption,
-    appIdOption, tagOption, groupOption,
-    launchUriOption,
+    tagOption, groupOption,
+    headerIdOption, headerTitleOption, headerArgumentsOption,
+    launchUriOption, onClickOption,
+    presetOption, waitOption, dryRunOption, jsonOption, versionOption,
     quietOption,
 };
 
@@ -120,17 +160,582 @@ var rootCommand = new RootCommand("Palantir - Windows Toast Notification CLI too
 var clearCommand = new Command("clear") { Description = "Clear all toast notification history" };
 clearCommand.SetAction(parseResult =>
 {
-    ToastService.ClearHistory();
-    if (!parseResult.GetValue(quietOption))
-        Console.WriteLine("Toast notification history cleared.");
+    try
+    {
+        ToastService.ClearHistory();
+        if (!parseResult.GetValue(quietOption))
+            Console.WriteLine("Toast notification history cleared.");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error clearing toast history: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
 });
 rootCommand.Subcommands.Add(clearCommand);
+
+// ── Remove subcommand ───────────────────────────────────────────────
+
+var removeCommand = new Command("remove") { Description = "Remove specific toasts from notification history" };
+var removeTagOption = new Option<string?>("--tag")
+{ Description = "Tag of the toast to remove" };
+var removeGroupOption = new Option<string?>("--group")
+{ Description = "Group to remove all toasts from" };
+removeCommand.Options.Add(removeTagOption);
+removeCommand.Options.Add(removeGroupOption);
+
+removeCommand.SetAction(parseResult =>
+{
+    var tag = parseResult.GetValue(removeTagOption);
+    var group = parseResult.GetValue(removeGroupOption);
+    var quiet = parseResult.GetValue(quietOption);
+
+    if (string.IsNullOrWhiteSpace(tag) && string.IsNullOrWhiteSpace(group))
+    {
+        Console.Error.WriteLine("Error: At least --tag or --group must be provided.");
+        Console.Error.WriteLine("Use --help for usage information.");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    try
+    {
+        if (!string.IsNullOrWhiteSpace(tag))
+        {
+            ToastService.Remove(tag, group);
+            if (!quiet) Console.WriteLine($"Removed toast with tag \"{tag}\".");
+        }
+        else if (!string.IsNullOrWhiteSpace(group))
+        {
+            ToastService.RemoveGroup(group);
+            if (!quiet) Console.WriteLine($"Removed all toasts in group \"{group}\".");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error removing toast: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+});
+rootCommand.Subcommands.Add(removeCommand);
+
+// ── Update subcommand ───────────────────────────────────────────────
+
+var updateCommand = new Command("update") { Description = "Update an existing toast's progress data" };
+var updateTagOption = new Option<string?>("--tag")
+{ Description = "Tag of the toast to update (required)" };
+var updateGroupOption = new Option<string?>("--group")
+{ Description = "Group of the toast to update" };
+var updateProgressValueOption = new Option<string?>("--progress-value")
+{ Description = "New progress value (0.0-1.0 or \"indeterminate\")" };
+var updateProgressValueStringOption = new Option<string?>("--progress-value-string")
+{ Description = "New progress value display string" };
+var updateProgressStatusOption = new Option<string?>("--progress-status")
+{ Description = "New progress status text" };
+var updateProgressTitleOption = new Option<string?>("--progress-title")
+{ Description = "New progress title" };
+var updateSequenceOption = new Option<uint?>("--sequence")
+{ Description = "Sequence number (must be >= previous update)" };
+
+updateCommand.Options.Add(updateTagOption);
+updateCommand.Options.Add(updateGroupOption);
+updateCommand.Options.Add(updateProgressValueOption);
+updateCommand.Options.Add(updateProgressValueStringOption);
+updateCommand.Options.Add(updateProgressStatusOption);
+updateCommand.Options.Add(updateProgressTitleOption);
+updateCommand.Options.Add(updateSequenceOption);
+
+updateCommand.SetAction(parseResult =>
+{
+    var tag = parseResult.GetValue(updateTagOption);
+    var quiet = parseResult.GetValue(quietOption);
+
+    if (string.IsNullOrWhiteSpace(tag))
+    {
+        Console.Error.WriteLine("Error: --tag is required for the update command.");
+        Console.Error.WriteLine("Use --help for usage information.");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    try
+    {
+        var result = ToastService.Update(
+            tag,
+            parseResult.GetValue(updateGroupOption),
+            parseResult.GetValue(updateProgressValueOption),
+            parseResult.GetValue(updateProgressValueStringOption),
+            parseResult.GetValue(updateProgressStatusOption),
+            parseResult.GetValue(updateProgressTitleOption),
+            parseResult.GetValue(updateSequenceOption));
+
+        if (result == NotificationUpdateResult.Succeeded)
+        {
+            if (!quiet) Console.WriteLine($"Toast \"{tag}\" updated successfully.");
+        }
+        else
+        {
+            Console.Error.WriteLine($"Failed to update toast \"{tag}\": {result}");
+            Environment.ExitCode = 1;
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error updating toast: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+});
+rootCommand.Subcommands.Add(updateCommand);
+
+// ── Completions subcommand ──────────────────────────────────────────
+
+var completionsCommand = new Command("completions") { Description = "Generate shell completion script" };
+var shellArgument = new Argument<string>("shell")
+{ Description = "Shell type: powershell" };
+completionsCommand.Arguments.Add(shellArgument);
+
+completionsCommand.SetAction(parseResult =>
+{
+    var shell = parseResult.GetValue(shellArgument)?.ToLowerInvariant();
+
+    if (shell == "powershell" || shell == "pwsh")
+    {
+        Console.WriteLine("""
+            # Palantir tab completion for PowerShell
+            # Add this to your $PROFILE
+            Register-ArgumentCompleter -CommandName palantir -Native -ScriptBlock {
+                param($wordToComplete, $commandAst, $cursorPosition)
+
+                $options = @(
+                    '-t', '--title', '-m', '--message', '-b', '--body', '--attribution',
+                    '-i', '--image', '--crop-circle', '--hero-image', '--inline-image',
+                    '--button', '--input', '--selection',
+                    '-a', '--audio', '-s', '--silent', '--loop',
+                    '--duration', '--scenario', '--expiration', '--timestamp',
+                    '--progress-title', '--progress-value', '--progress-value-string', '--progress-status',
+                    '--tag', '--group',
+                    '--header-id', '--header-title', '--header-arguments',
+                    '--launch', '--on-click',
+                    '--preset', '--wait', '--dry-run', '--json', '--version',
+                    '-q', '--quiet'
+                )
+                $subcommands = @('clear', 'remove', 'update', 'completions', 'preset')
+                $all = $options + $subcommands
+
+                $all | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                    [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+                }
+            }
+            """);
+    }
+    else
+    {
+        Console.Error.WriteLine($"Unsupported shell: \"{shell}\". Supported: powershell");
+        Environment.ExitCode = 1;
+    }
+});
+rootCommand.Subcommands.Add(completionsCommand);
+
+// ── Preset subcommand ───────────────────────────────────────────────
+
+var presetCommand = new Command("preset") { Description = "Manage notification presets" };
+
+// preset save <name> [json-or-file]
+var presetSaveCommand = new Command("save") { Description = "Save a new preset from JSON" };
+var presetSaveNameArg = new Argument<string>("name") { Description = "Preset name" };
+var presetSaveJsonArg = new Argument<string?>("json-or-file")
+{ Description = "Inline JSON string, file path, or \"-\" for stdin" };
+presetSaveJsonArg.Arity = ArgumentArity.ZeroOrOne;
+presetSaveCommand.Arguments.Add(presetSaveNameArg);
+presetSaveCommand.Arguments.Add(presetSaveJsonArg);
+
+presetSaveCommand.SetAction(parseResult =>
+{
+    var name = parseResult.GetValue(presetSaveNameArg)!;
+    var jsonOrFile = parseResult.GetValue(presetSaveJsonArg);
+    var quiet = parseResult.GetValue(quietOption);
+
+    try
+    {
+        string jsonContent;
+
+        if (string.IsNullOrWhiteSpace(jsonOrFile))
+        {
+            // Try stdin
+            if (Console.IsInputRedirected)
+            {
+                jsonContent = Console.In.ReadToEnd();
+            }
+            else
+            {
+                Console.Error.WriteLine(
+                    "Error: No preset data provided. Use one of:\n" +
+                    $"  palantir preset save {name} '{{\"audio\":\"mail\",\"duration\":\"long\"}}'\n" +
+                    $"  palantir preset save {name} preset.json\n" +
+                    $"  echo '{{...}}' | palantir preset save {name}");
+                Environment.ExitCode = 1;
+                return;
+            }
+        }
+        else if (jsonOrFile == "-")
+        {
+            if (!Console.IsInputRedirected)
+            {
+                Console.Error.WriteLine("Error: Cannot read from stdin — no input piped.");
+                Environment.ExitCode = 1;
+                return;
+            }
+            jsonContent = Console.In.ReadToEnd();
+        }
+        else if (jsonOrFile.TrimStart().StartsWith('{'))
+        {
+            // Inline JSON
+            jsonContent = jsonOrFile;
+        }
+        else
+        {
+            // File path
+            if (!File.Exists(jsonOrFile))
+            {
+                Console.Error.WriteLine($"Error: File not found: \"{jsonOrFile}\"");
+                Environment.ExitCode = 1;
+                return;
+            }
+            jsonContent = File.ReadAllText(jsonOrFile);
+        }
+
+        var preset = PresetStore.DeserializePreset(jsonContent);
+        PresetStore.SavePreset(name, preset);
+
+        if (!quiet)
+        {
+            var label = PresetStore.IsBuiltIn(name) ? " (overrides built-in)" : "";
+            Console.WriteLine($"Preset \"{name}\" saved{label}.");
+        }
+    }
+    catch (System.Text.Json.JsonException ex)
+    {
+        Console.Error.WriteLine($"Error parsing JSON: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error saving preset: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+});
+presetCommand.Subcommands.Add(presetSaveCommand);
+
+// preset list
+var presetListCommand = new Command("list") { Description = "List all available presets" };
+presetListCommand.SetAction(parseResult =>
+{
+    var builtIn = PresetStore.GetBuiltInPresets();
+    var user = PresetStore.GetUserPresets();
+
+    // Built-in presets
+    Console.WriteLine("Built-in:");
+    foreach (var (name, opts) in builtIn)
+    {
+        var overridden = user.Keys.Any(k => k.Equals(name, StringComparison.OrdinalIgnoreCase));
+        var marker = overridden ? " (overridden by user)" : "";
+        Console.WriteLine($"  {name,-14} {PresetStore.FormatSummary(opts)}{marker}");
+    }
+
+    // User presets
+    if (user.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("User:");
+        foreach (var (name, opts) in user)
+            Console.WriteLine($"  {name,-14} {PresetStore.FormatSummary(opts)}");
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"Config: {PresetStore.GetConfigFilePath()}");
+});
+presetCommand.Subcommands.Add(presetListCommand);
+
+// preset show <name>
+var presetShowCommand = new Command("show") { Description = "Show a preset's full configuration" };
+var presetShowNameArg = new Argument<string>("name") { Description = "Preset name" };
+presetShowCommand.Arguments.Add(presetShowNameArg);
+
+presetShowCommand.SetAction(parseResult =>
+{
+    var name = parseResult.GetValue(presetShowNameArg)!;
+    var preset = PresetStore.GetPreset(name);
+
+    if (preset is null)
+    {
+        Console.Error.WriteLine($"Error: Preset \"{name}\" not found.");
+        Console.Error.WriteLine("Use 'palantir preset list' to see available presets.");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    var source = PresetStore.IsBuiltIn(name) ? " (built-in)" : " (user)";
+    // Check if a user preset shadows a built-in
+    var user = PresetStore.GetUserPresets();
+    if (user.Keys.Any(k => k.Equals(name, StringComparison.OrdinalIgnoreCase))
+        && PresetStore.IsBuiltIn(name))
+    {
+        source = " (user, overrides built-in)";
+    }
+
+    Console.WriteLine($"# {name}{source}");
+    Console.WriteLine(PresetStore.SerializePresetJson(preset));
+});
+presetCommand.Subcommands.Add(presetShowCommand);
+
+// preset delete <name>
+var presetDeleteCommand = new Command("delete") { Description = "Delete a user preset" };
+var presetDeleteNameArg = new Argument<string>("name") { Description = "Preset name" };
+presetDeleteCommand.Arguments.Add(presetDeleteNameArg);
+
+presetDeleteCommand.SetAction(parseResult =>
+{
+    var name = parseResult.GetValue(presetDeleteNameArg)!;
+    var quiet = parseResult.GetValue(quietOption);
+
+    if (!PresetStore.DeletePreset(name))
+    {
+        if (PresetStore.IsBuiltIn(name))
+        {
+            Console.Error.WriteLine(
+                $"Error: \"{name}\" is a built-in preset and cannot be deleted.");
+        }
+        else
+        {
+            Console.Error.WriteLine($"Error: User preset \"{name}\" not found.");
+        }
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    if (!quiet)
+    {
+        var restored = PresetStore.IsBuiltIn(name) ? " Built-in default restored." : "";
+        Console.WriteLine($"Preset \"{name}\" deleted.{restored}");
+    }
+});
+presetCommand.Subcommands.Add(presetDeleteCommand);
+
+rootCommand.Subcommands.Add(presetCommand);
 
 // ── Root handler ────────────────────────────────────────────────────
 
 rootCommand.SetAction(parseResult =>
 {
-    var options = new ToastOptions
+    // ── Version check ───────────────────────────────────────────
+    if (parseResult.GetValue(versionOption))
+    {
+        Console.WriteLine($"palantir {version}");
+        return;
+    }
+
+    var quiet = parseResult.GetValue(quietOption);
+    Action<string>? onWarning = quiet ? null : msg => Console.Error.WriteLine(msg);
+
+    // ── JSON input ──────────────────────────────────────────────
+    var jsonFile = parseResult.GetValue(jsonOption);
+    ToastOptions options;
+
+    if (!string.IsNullOrWhiteSpace(jsonFile))
+    {
+        try
+        {
+            string jsonContent;
+            if (jsonFile == "-")
+            {
+                if (!Console.IsInputRedirected)
+                {
+                    Console.Error.WriteLine(
+                        "Error: Cannot read JSON from stdin — no input piped. " +
+                        "Use: echo '{\"title\":\"Hello\"}' | palantir --json -");
+                    Environment.ExitCode = 1;
+                    return;
+                }
+                jsonContent = Console.In.ReadToEnd();
+            }
+            else
+            {
+                jsonContent = File.ReadAllText(jsonFile);
+            }
+
+            var jsonOpts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            options = JsonSerializer.Deserialize<ToastOptions>(jsonContent, jsonOpts)
+                      ?? new ToastOptions();
+        }
+        catch (JsonException ex)
+        {
+            Console.Error.WriteLine($"Error parsing JSON: {ex.Message}");
+            Environment.ExitCode = 1;
+            return;
+        }
+        catch (FileNotFoundException)
+        {
+            Console.Error.WriteLine($"Error: JSON file not found: \"{jsonFile}\"");
+            Environment.ExitCode = 1;
+            return;
+        }
+        catch (IOException ex)
+        {
+            Console.Error.WriteLine($"Error reading JSON file: {ex.Message}");
+            Environment.ExitCode = 1;
+            return;
+        }
+
+        // Override JSON values with any explicitly provided CLI options
+        OverrideFromCli(options, parseResult);
+    }
+    else
+    {
+        options = BuildOptionsFromCli(parseResult);
+    }
+
+    // ── Stdin pipe support ──────────────────────────────────────
+    string? stdinContent = null;
+    string? ResolveStdin(string? value)
+    {
+        if (value != "-") return value;
+        if (!Console.IsInputRedirected)
+        {
+            Console.Error.WriteLine(
+                "Error: Cannot read from stdin — no input piped. " +
+                "Use: echo \"text\" | palantir -m -");
+            Environment.ExitCode = 1;
+            return null;
+        }
+        stdinContent ??= Console.In.ReadToEnd().TrimEnd('\r', '\n');
+        return stdinContent;
+    }
+
+    options.Title = ResolveStdin(options.Title);
+    options.Message = ResolveStdin(options.Message);
+    options.Body = ResolveStdin(options.Body);
+
+    if (Environment.ExitCode != 0) return;
+
+    // ── Apply preset ────────────────────────────────────────────
+    if (!string.IsNullOrWhiteSpace(options.Preset))
+    {
+        var preset = PresetStore.GetPreset(options.Preset);
+        if (preset is null)
+        {
+            onWarning?.Invoke(
+                $"Warning: Unknown preset \"{options.Preset}\". " +
+                "Use 'palantir preset list' to see available presets.");
+        }
+        else
+        {
+            var explicitOptions = GetExplicitOptions(parseResult);
+            PresetStore.MergePreset(options, preset, explicitOptions);
+        }
+    }
+
+    // ── --on-click implies --wait ───────────────────────────────
+    if (!string.IsNullOrWhiteSpace(options.OnClickCommand))
+        options.Wait = true;
+
+    // ── Validate required options ───────────────────────────────
+    if (string.IsNullOrWhiteSpace(options.Title) && string.IsNullOrWhiteSpace(options.Message)
+        && !options.DryRun)
+    {
+        Console.Error.WriteLine("Error: At least --title or --message must be provided.");
+        Console.Error.WriteLine("Use --help for usage information.");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    // ── Validate expiration ─────────────────────────────────────
+    if (options.Expiration.HasValue && options.Expiration.Value <= 0)
+    {
+        onWarning?.Invoke(
+            $"Warning: Expiration must be a positive number of minutes. " +
+            $"Got {options.Expiration.Value}. Ignoring.");
+        options.Expiration = null;
+    }
+
+    // ── Execute ─────────────────────────────────────────────────
+    try
+    {
+        if (options.DryRun)
+        {
+            var xml = ToastService.GetXml(options, onWarning);
+            Console.WriteLine(xml);
+            return;
+        }
+
+        if (options.Wait)
+        {
+            var result = ToastService.ShowAndWait(options, onWarning);
+            Console.WriteLine(result.ToJson());
+
+            // Execute on-click command if toast was activated
+            if (result.Action == "activated" &&
+                !string.IsNullOrWhiteSpace(options.OnClickCommand))
+            {
+                try
+                {
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe",
+                        Arguments = $"/c {options.OnClickCommand}",
+                        UseShellExecute = false,
+                    };
+                    Process.Start(psi);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Error executing on-click command: {ex.Message}");
+                    Environment.ExitCode = 1;
+                }
+            }
+
+            // Set exit code based on result
+            Environment.ExitCode = result.Action switch
+            {
+                "activated" => 0,
+                "dismissed" => 1,
+                "failed" => 2,
+                "cancelled" => 3,
+                _ => 4,
+            };
+            return;
+        }
+
+        ToastService.Show(options, onWarning);
+        if (!quiet)
+            Console.WriteLine("Toast notification sent.");
+    }
+    catch (InvalidOperationException ex)
+    {
+        Console.Error.WriteLine($"Error: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+    catch (System.Runtime.InteropServices.COMException ex)
+    {
+        Console.Error.WriteLine($"Error sending toast notification (COM): {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error sending toast notification: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+});
+
+// ── Run ─────────────────────────────────────────────────────────────
+
+var config = new CommandLineConfiguration(rootCommand);
+return config.Invoke(args);
+
+// ── Helper methods ──────────────────────────────────────────────────
+
+ToastOptions BuildOptionsFromCli(ParseResult parseResult)
+{
+    return new ToastOptions
     {
         Title = parseResult.GetValue(titleOption),
         Message = parseResult.GetValue(messageOption),
@@ -154,34 +759,156 @@ rootCommand.SetAction(parseResult =>
         ProgressValue = parseResult.GetValue(progressValueOption),
         ProgressValueString = parseResult.GetValue(progressValueStringOption),
         ProgressStatus = parseResult.GetValue(progressStatusOption),
-        AppId = parseResult.GetValue(appIdOption),
         Tag = parseResult.GetValue(tagOption),
         Group = parseResult.GetValue(groupOption),
+        HeaderId = parseResult.GetValue(headerIdOption),
+        HeaderTitle = parseResult.GetValue(headerTitleOption),
+        HeaderArguments = parseResult.GetValue(headerArgumentsOption),
         LaunchUri = parseResult.GetValue(launchUriOption),
+        OnClickCommand = parseResult.GetValue(onClickOption),
+        Preset = parseResult.GetValue(presetOption),
+        Wait = parseResult.GetValue(waitOption),
+        DryRun = parseResult.GetValue(dryRunOption),
     };
+}
 
-    if (string.IsNullOrWhiteSpace(options.Title) && string.IsNullOrWhiteSpace(options.Message))
-    {
-        Console.Error.WriteLine("Error: At least --title or --message must be provided.");
-        Console.Error.WriteLine("Use --help for usage information.");
-        Environment.ExitCode = 1;
-        return;
-    }
+void OverrideFromCli(ToastOptions options, ParseResult parseResult)
+{
+    // Override JSON values with explicitly provided CLI options.
+    // For nullable types: CLI value wins if non-null.
+    // For bool types: CLI value wins if true (flags are additive).
+    // For arrays: CLI value wins if non-empty.
+    var cliTitle = parseResult.GetValue(titleOption);
+    if (cliTitle is not null) options.Title = cliTitle;
 
-    try
-    {
-        ToastService.Show(options);
-        if (!parseResult.GetValue(quietOption))
-            Console.WriteLine("Toast notification sent.");
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"Error sending toast notification: {ex.Message}");
-        Environment.ExitCode = 1;
-    }
-});
+    var cliMessage = parseResult.GetValue(messageOption);
+    if (cliMessage is not null) options.Message = cliMessage;
 
-// ── Run ─────────────────────────────────────────────────────────────
+    var cliBody = parseResult.GetValue(bodyOption);
+    if (cliBody is not null) options.Body = cliBody;
 
-var config = new CommandLineConfiguration(rootCommand);
-return config.Invoke(args);
+    var cliAttribution = parseResult.GetValue(attributionOption);
+    if (cliAttribution is not null) options.Attribution = cliAttribution;
+
+    var cliImage = parseResult.GetValue(imageOption);
+    if (cliImage is not null) options.Image = cliImage;
+
+    if (parseResult.GetValue(cropCircleOption)) options.CropCircle = true;
+
+    var cliHeroImage = parseResult.GetValue(heroImageOption);
+    if (cliHeroImage is not null) options.HeroImage = cliHeroImage;
+
+    var cliInlineImage = parseResult.GetValue(inlineImageOption);
+    if (cliInlineImage is not null) options.InlineImage = cliInlineImage;
+
+    var cliButtons = parseResult.GetValue(buttonOption);
+    if (cliButtons is { Length: > 0 }) options.Buttons = cliButtons;
+
+    var cliInputs = parseResult.GetValue(inputOption);
+    if (cliInputs is { Length: > 0 }) options.Inputs = cliInputs;
+
+    var cliSelections = parseResult.GetValue(selectionOption);
+    if (cliSelections is { Length: > 0 }) options.Selections = cliSelections;
+
+    var cliAudio = parseResult.GetValue(audioOption);
+    if (cliAudio is not null) options.Audio = cliAudio;
+
+    if (parseResult.GetValue(silentOption)) options.Silent = true;
+    if (parseResult.GetValue(loopOption)) options.Loop = true;
+
+    var cliDuration = parseResult.GetValue(durationOption);
+    if (cliDuration is not null) options.Duration = cliDuration;
+
+    var cliScenario = parseResult.GetValue(scenarioOption);
+    if (cliScenario is not null) options.Scenario = cliScenario;
+
+    var cliExpiration = parseResult.GetValue(expirationOption);
+    if (cliExpiration.HasValue) options.Expiration = cliExpiration;
+
+    var cliTimestamp = parseResult.GetValue(timestampOption);
+    if (cliTimestamp is not null) options.Timestamp = cliTimestamp;
+
+    var cliProgressTitle = parseResult.GetValue(progressTitleOption);
+    if (cliProgressTitle is not null) options.ProgressTitle = cliProgressTitle;
+
+    var cliProgressValue = parseResult.GetValue(progressValueOption);
+    if (cliProgressValue is not null) options.ProgressValue = cliProgressValue;
+
+    var cliProgressValueString = parseResult.GetValue(progressValueStringOption);
+    if (cliProgressValueString is not null) options.ProgressValueString = cliProgressValueString;
+
+    var cliProgressStatus = parseResult.GetValue(progressStatusOption);
+    if (cliProgressStatus is not null) options.ProgressStatus = cliProgressStatus;
+
+    var cliTag = parseResult.GetValue(tagOption);
+    if (cliTag is not null) options.Tag = cliTag;
+
+    var cliGroup = parseResult.GetValue(groupOption);
+    if (cliGroup is not null) options.Group = cliGroup;
+
+    var cliHeaderId = parseResult.GetValue(headerIdOption);
+    if (cliHeaderId is not null) options.HeaderId = cliHeaderId;
+
+    var cliHeaderTitle = parseResult.GetValue(headerTitleOption);
+    if (cliHeaderTitle is not null) options.HeaderTitle = cliHeaderTitle;
+
+    var cliHeaderArguments = parseResult.GetValue(headerArgumentsOption);
+    if (cliHeaderArguments is not null) options.HeaderArguments = cliHeaderArguments;
+
+    var cliLaunchUri = parseResult.GetValue(launchUriOption);
+    if (cliLaunchUri is not null) options.LaunchUri = cliLaunchUri;
+
+    var cliOnClick = parseResult.GetValue(onClickOption);
+    if (cliOnClick is not null) options.OnClickCommand = cliOnClick;
+
+    var cliPreset = parseResult.GetValue(presetOption);
+    if (cliPreset is not null) options.Preset = cliPreset;
+
+    if (parseResult.GetValue(waitOption)) options.Wait = true;
+    if (parseResult.GetValue(dryRunOption)) options.DryRun = true;
+}
+
+HashSet<string> GetExplicitOptions(ParseResult parseResult)
+{
+    var explicit_ = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    // String? options — explicitly provided if non-null
+    if (parseResult.GetValue(titleOption) is not null) explicit_.Add("title");
+    if (parseResult.GetValue(messageOption) is not null) explicit_.Add("message");
+    if (parseResult.GetValue(bodyOption) is not null) explicit_.Add("body");
+    if (parseResult.GetValue(attributionOption) is not null) explicit_.Add("attribution");
+    if (parseResult.GetValue(imageOption) is not null) explicit_.Add("image");
+    if (parseResult.GetValue(heroImageOption) is not null) explicit_.Add("heroImage");
+    if (parseResult.GetValue(inlineImageOption) is not null) explicit_.Add("inlineImage");
+    if (parseResult.GetValue(audioOption) is not null) explicit_.Add("audio");
+    if (parseResult.GetValue(durationOption) is not null) explicit_.Add("duration");
+    if (parseResult.GetValue(scenarioOption) is not null) explicit_.Add("scenario");
+    if (parseResult.GetValue(timestampOption) is not null) explicit_.Add("timestamp");
+    if (parseResult.GetValue(progressTitleOption) is not null) explicit_.Add("progressTitle");
+    if (parseResult.GetValue(progressValueOption) is not null) explicit_.Add("progressValue");
+    if (parseResult.GetValue(progressValueStringOption) is not null) explicit_.Add("progressValueString");
+    if (parseResult.GetValue(progressStatusOption) is not null) explicit_.Add("progressStatus");
+    if (parseResult.GetValue(tagOption) is not null) explicit_.Add("tag");
+    if (parseResult.GetValue(groupOption) is not null) explicit_.Add("group");
+    if (parseResult.GetValue(headerIdOption) is not null) explicit_.Add("headerId");
+    if (parseResult.GetValue(headerTitleOption) is not null) explicit_.Add("headerTitle");
+    if (parseResult.GetValue(headerArgumentsOption) is not null) explicit_.Add("headerArguments");
+    if (parseResult.GetValue(launchUriOption) is not null) explicit_.Add("launch");
+    if (parseResult.GetValue(onClickOption) is not null) explicit_.Add("onClick");
+
+    // Bool options — explicitly provided if true (flags)
+    if (parseResult.GetValue(cropCircleOption)) explicit_.Add("cropCircle");
+    if (parseResult.GetValue(silentOption)) explicit_.Add("silent");
+    if (parseResult.GetValue(loopOption)) explicit_.Add("loop");
+    if (parseResult.GetValue(waitOption)) explicit_.Add("wait");
+
+    // Int? options
+    if (parseResult.GetValue(expirationOption).HasValue) explicit_.Add("expiration");
+
+    // Array options — explicitly provided if non-empty
+    if (parseResult.GetValue(buttonOption) is { Length: > 0 }) explicit_.Add("buttons");
+    if (parseResult.GetValue(inputOption) is { Length: > 0 }) explicit_.Add("inputs");
+    if (parseResult.GetValue(selectionOption) is { Length: > 0 }) explicit_.Add("selections");
+
+    return explicit_;
+}
