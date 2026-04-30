@@ -710,7 +710,7 @@ pRegisterCmd.SetAction(parseResult =>
         var entry = PersonalityStore.Register(name, personality);
         if (!quiet)
             Console.WriteLine(
-                $"Registered \"{name}\" → AUMID={entry.Aumid}, shortcut={entry.Shortcut}");
+                $"Registered \"{name}\" → AUMID={entry.Aumid}, shortcut={entry.ShortcutPath}");
     }
     catch (Exception ex)
     {
@@ -756,8 +756,12 @@ personalityCommand.Subcommands.Add(pUnregisterCmd);
 
 // personality list
 var pListCmd = new Command("list") { Description = "List personalities (config + Windows state)" };
+var pListVerboseOpt = new Option<bool>("--verbose", "-v")
+{ Description = "Show concrete shortcut paths and resolved icon paths" };
+pListCmd.Options.Add(pListVerboseOpt);
 pListCmd.SetAction(parseResult =>
 {
+    var verbose = parseResult.GetValue(pListVerboseOpt);
     var infos = PersonalityStore.List();
     if (infos.Count == 0)
     {
@@ -770,13 +774,23 @@ pListCmd.SetAction(parseResult =>
     foreach (var i in infos)
     {
         var states = new List<string>();
+        var isBuiltInDefault = i.Name.Equals(
+            PersonalityStore.BuiltInDefaultName, StringComparison.OrdinalIgnoreCase);
         if (i.InConfig) states.Add("config");
+        if (isBuiltInDefault && !i.InConfig) states.Add("built-in");
         if (i.RegisteredInWindows) states.Add("windows");
-        if (!i.InConfig && i.RegisteredInWindows) states.Add("STALE");
+        if (!i.InConfig && !isBuiltInDefault && i.RegisteredInWindows) states.Add("STALE");
         if (i.InConfig && !i.RegisteredInWindows) states.Add("not-registered");
         var stateStr = string.Join(",", states);
         Console.WriteLine(
             $"  {i.Name,-16} {i.DisplayName ?? "-",-20} aumid={i.Aumid,-30} [{stateStr}]");
+        if (verbose)
+        {
+            if (!string.IsNullOrEmpty(i.ShortcutPath))
+                Console.WriteLine($"      shortcut: {i.ShortcutPath}");
+            if (!string.IsNullOrEmpty(i.Icon))
+                Console.WriteLine($"      icon:     {i.Icon}");
+        }
     }
     Console.WriteLine();
     Console.WriteLine($"Config:   {PresetStore.GetConfigFilePath()}");

@@ -14,6 +14,16 @@ internal static class ShellLink
         new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), 5);
 
     /// <summary>
+    /// System.AppUserModel.ToastActivatorCLSID property key. REQUIRED on the
+    /// shortcut for Windows 10 1607+ to display toasts at all when using a
+    /// custom AUMID via <c>ToastNotificationManager.CreateToastNotifier(aumid)</c>.
+    /// Without it, <c>Show()</c> succeeds silently but no banner / Action Center
+    /// entry is produced.
+    /// </summary>
+    private static readonly PropertyKey PKEY_AppUserModel_ToastActivatorCLSID = new(
+        new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), 26);
+
+    /// <summary>
     /// Create or overwrite a Start Menu shortcut at <paramref name="shortcutPath"/>
     /// pointing to <paramref name="targetExe"/>, with the given AUMID and icon.
     /// </summary>
@@ -22,6 +32,7 @@ internal static class ShellLink
         string targetExe,
         string aumid,
         string iconPath,
+        Guid toastActivatorClsid,
         string? arguments = null,
         string? description = null)
     {
@@ -44,6 +55,10 @@ internal static class ShellLink
             using (var pv = PropVariant.FromString(aumid))
             {
                 store.SetValue(ref Unsafe(PKEY_AppUserModel_ID), pv.Variant);
+            }
+            using (var pv = PropVariant.FromClsid(toastActivatorClsid))
+            {
+                store.SetValue(ref Unsafe(PKEY_AppUserModel_ToastActivatorCLSID), pv.Variant);
             }
             store.Commit();
 
@@ -175,6 +190,20 @@ internal static class ShellLink
                 _allocated = Marshal.StringToCoTaskMemUni(s),
             };
             pv.Variant.vt = VarEnum.VT_LPWSTR;
+            pv.Variant.unionmember = pv._allocated;
+            return pv;
+        }
+
+        public static PropVariant FromClsid(Guid clsid)
+        {
+            // VT_CLSID requires the GUID itself heap-allocated; PROPVARIANT
+            // owns the memory and PropVariantClear frees it.
+            var pv = new PropVariant
+            {
+                _allocated = Marshal.AllocCoTaskMem(16),
+            };
+            Marshal.StructureToPtr(clsid, pv._allocated, fDeleteOld: false);
+            pv.Variant.vt = VarEnum.VT_CLSID;
             pv.Variant.unionmember = pv._allocated;
             return pv;
         }

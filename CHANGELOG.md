@@ -10,7 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Personalities** — Per-toast app identity (the corner icon and app name Windows shows on every toast). Configure named personalities in `palantir.json`; switch per invocation with `--as <name>` or set a default via `palantir personality use --name <name>`. One-off overrides via `--display-name` and `--app-icon` (path or URL; PNG/JPG auto-converted to ICO and cached). Lazy auto-registration on first use; subsequent toasts are zero-overhead.
-- **`personality` subcommand tree** — `register`, `unregister`, `list`, `register-all`, `unregister-all`, `sync`, `prune`, `use`, `delete` for full lifecycle management.
+- **Built-in `palantir` default personality** — Auto-registered the first time a default toast is sent. Customize by adding `personalities.palantir` to `palantir.json` (override `displayName`/`icon`); icon defaults to the Palantir executable's embedded icon. Bulk personality ops skip it (it would auto-recreate).
+- **`personality` subcommand tree** — `register`, `unregister`, `list` (with `--verbose`), `register-all`, `unregister-all`, `sync`, `prune`, `use`, `delete` for full lifecycle management.
+- **Portable config / machine-local state separation** — `palantir.json` is logical-only and safe to sync (dotfiles); `registry.json` defaults to `$XDG_STATE_HOME/palantir/registry.json` (or `%LocalAppData%\Palantir\state\registry.json`) and recomputes concrete shortcut/icon paths on demand. Cache also defaults outside the config dir.
+- **`XDG_CONFIG_HOME` cache fallback** — Cache path now falls back through `XDG_CACHE_HOME` → `XDG_CONFIG_HOME/palantir/cache` → `%LocalAppData%\Palantir\cache`.
+- **Token expansion** — `${ENV_VAR}`, `${PALANTIR_CONFIG}`, `${PALANTIR_CACHE}`, and leading `~` are expanded in every path-accepting field including `paths.*` and `personalities.*.icon`.
 - **`cache` subcommand** — `cache path` shows resolved cache directories; `cache clear [--icons|--images]` empties them.
 - **Configurable file locations** — New `paths` section in `palantir.json` (`cache`, `icons`, `images`, `registry`) with environment-variable fallbacks (`PALANTIR_CACHE_PATH`, `PALANTIR_ICONS_PATH`, etc.). Sub-paths derive from `cache` when not set explicitly.
 - **`aumidPrefix` config** — Custom AUMID namespace for branded forks; bulk operations only act on AUMIDs sharing the prefix.

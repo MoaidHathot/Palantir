@@ -343,6 +343,11 @@ palantir personality use --name opencode
 palantir --display-name "X" --app-icon path -t "..."
 ```
 
+**Built-in default**: when nothing else is specified, Palantir auto-registers
+and uses a `palantir` personality (display "Palantir", icon = exe icon).
+Customize via a `personalities.palantir` entry in `palantir.json`. Shown
+in `personality list` as `[built-in,windows]`. Bulk ops skip it (auto-recreates).
+
 | Command | Effect |
 |---------|--------|
 | `personality list` | config + Windows state |
@@ -357,21 +362,26 @@ Center history), `--keep-shortcut` (advanced).
 
 ## Cache & Paths
 
-`paths` section in `palantir.json` (all keys optional):
+`palantir.json` is **portable** (logical only). `registry.json` and the cache
+are **machine-local state** and recreated automatically — never sync them.
+
+`paths` section (all keys optional):
 ```json
 {
   "paths": {
-    "cache":    "D:\\palantir-cache",
-    "icons":    "D:\\palantir-cache\\icons",
-    "images":   "D:\\palantir-cache\\images",
-    "registry": "D:\\palantir-cache\\registry.json"
+    "cache":    "${XDG_CACHE_HOME}/palantir",
+    "icons":    "${PALANTIR_CONFIG}/icons",
+    "registry": "${XDG_STATE_HOME}/palantir/registry.json"
   }
 }
 ```
 
-Defaults: `%LocalAppData%\Palantir\cache` (icons/images derived from it),
-`<configDir>\registry.json`. Env-var overrides: `PALANTIR_CACHE_PATH`,
-`PALANTIR_ICONS_PATH`, `PALANTIR_IMAGES_PATH`, `PALANTIR_REGISTRY_PATH`.
+Tokens supported anywhere (incl. `personalities.*.icon`):
+`${VAR}` (any env var), `${PALANTIR_CONFIG}`, `${PALANTIR_CACHE}`, leading `~`.
+
+Defaults:
+- Cache: `paths.cache` → `PALANTIR_CACHE_PATH` → `XDG_CACHE_HOME/palantir` → `XDG_CONFIG_HOME/palantir/cache` → `%LocalAppData%\Palantir\cache`
+- Registry: `paths.registry` → `PALANTIR_REGISTRY_PATH` → `XDG_STATE_HOME/palantir/registry.json` → `%LocalAppData%\Palantir\state\registry.json`
 
 | Command | Effect |
 |---------|--------|

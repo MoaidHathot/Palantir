@@ -25,10 +25,10 @@ public class PersonalityTests
             },
         };
 
-        Assert.Equal(tmp, PathsResolver.GetCacheDirectory(config));
-        Assert.Equal(Path.Combine(tmp, "ic"), PathsResolver.GetIconsDirectory(config));
-        Assert.Equal(Path.Combine(tmp, "im"), PathsResolver.GetImagesDirectory(config));
-        Assert.Equal(Path.Combine(tmp, "reg.json"), PathsResolver.GetRegistryFilePath(config));
+        Assert.Equal(Path.GetFullPath(tmp), PathsResolver.GetCacheDirectory(config));
+        Assert.Equal(Path.GetFullPath(Path.Combine(tmp, "ic")), PathsResolver.GetIconsDirectory(config));
+        Assert.Equal(Path.GetFullPath(Path.Combine(tmp, "im")), PathsResolver.GetImagesDirectory(config));
+        Assert.Equal(Path.GetFullPath(Path.Combine(tmp, "reg.json")), PathsResolver.GetRegistryFilePath(config));
     }
 
     [Fact]
@@ -37,8 +37,8 @@ public class PersonalityTests
         var tmp = Path.Combine(Path.GetTempPath(), "palantir-test-" + Guid.NewGuid().ToString("N"));
         var config = new PalantirConfig { Paths = new PalantirPaths { Cache = tmp } };
 
-        Assert.Equal(Path.Combine(tmp, "icons"), PathsResolver.GetIconsDirectory(config));
-        Assert.Equal(Path.Combine(tmp, "images"), PathsResolver.GetImagesDirectory(config));
+        Assert.Equal(Path.Combine(Path.GetFullPath(tmp), "icons"), PathsResolver.GetIconsDirectory(config));
+        Assert.Equal(Path.Combine(Path.GetFullPath(tmp), "images"), PathsResolver.GetImagesDirectory(config));
     }
 
     [Fact]
@@ -197,7 +197,231 @@ public class PersonalityTests
         Assert.EndsWith("OpenCode.lnk", path);
     }
 
-    // ── Helper ──────────────────────────────────────────────────────
+    // ── Token expansion ─────────────────────────────────────────────
+
+    [Fact]
+    public void PathsResolver_ExpandValue_EnvVarToken()
+    {
+        var key = "PALANTIR_TEST_TOKEN_" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable(key, "expanded-value");
+        try
+        {
+            var result = PathsResolver.ExpandValue($"prefix-${{{key}}}-suffix");
+            Assert.Equal("prefix-expanded-value-suffix", result);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(key, null);
+        }
+    }
+
+    [Fact]
+    public void PathsResolver_ExpandValue_UnknownTokenLeftIntact()
+    {
+        var result = PathsResolver.ExpandValue("a/${THIS_VAR_DOES_NOT_EXIST_12345}/b");
+        Assert.Equal("a/${THIS_VAR_DOES_NOT_EXIST_12345}/b", result);
+    }
+
+    [Fact]
+    public void PathsResolver_ExpandValue_PalantirConfigToken()
+    {
+        var result = PathsResolver.ExpandValue("${PALANTIR_CONFIG}/sub");
+        Assert.DoesNotContain("${PALANTIR_CONFIG}", result);
+        Assert.EndsWith("sub", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PathsResolver_Expand_TildeBecomesUserProfile()
+    {
+        var result = PathsResolver.Expand("~/palantir-test");
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Assert.StartsWith(home, result, StringComparison.OrdinalIgnoreCase);
+        Assert.EndsWith("palantir-test", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PathsResolver_Expand_EmptyOrNullReturnsUnchanged()
+    {
+        Assert.Equal("", PathsResolver.Expand(""));
+    }
+
+    [Fact]
+    public void PathsResolver_PathsCache_HonorsToken()
+    {
+        var key = "PALANTIR_TEST_CACHE_" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable(key, Path.Combine(Path.GetTempPath(), "tk"));
+        try
+        {
+            var config = new PalantirConfig
+            {
+                Paths = new PalantirPaths { Cache = $"${{{key}}}/sub" },
+            };
+            var resolved = PathsResolver.GetCacheDirectory(config);
+            Assert.Contains(Path.Combine("tk", "sub"), resolved);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(key, null);
+        }
+    }
+
+    // ── XDG_CONFIG_HOME fallback for cache ──────────────────────────
+
+    [Fact]
+    public void PathsResolver_CacheFallsBackToXdgConfigHome()
+    {
+        // Save and clear all higher-priority sources so we hit XDG_CONFIG_HOME.
+        var saved = new[]
+        {
+            ("PALANTIR_CACHE_PATH", Environment.GetEnvironmentVariable("PALANTIR_CACHE_PATH")),
+            ("XDG_CACHE_HOME",      Environment.GetEnvironmentVariable("XDG_CACHE_HOME")),
+            ("XDG_CONFIG_HOME",     Environment.GetEnvironmentVariable("XDG_CONFIG_HOME")),
+        };
+        var probe = Path.Combine(Path.GetTempPath(), "xdg-cfg-" + Guid.NewGuid().ToString("N"));
+        Environment.SetEnvironmentVariable("PALANTIR_CACHE_PATH", null);
+        Environment.SetEnvironmentVariable("XDG_CACHE_HOME", null);
+        Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", probe);
+        try
+        {
+            var resolved = PathsResolver.GetCacheDirectory(new PalantirConfig());
+            Assert.Equal(
+                Path.GetFullPath(Path.Combine(probe, "palantir", "cache")),
+                resolved);
+        }
+        finally
+        {
+            foreach (var (k, v) in saved)
+                Environment.SetEnvironmentVariable(k, v);
+        }
+    }
+
+    // ── Registry default location (state, not config) ───────────────
+
+    [Fact]
+    public void PathsResolver_RegistryDefaultsToStateDir_NotConfigDir()
+    {
+        // Clear all overrides; default should fall through to LocalAppData state.
+        var saved = new[]
+        {
+            ("PALANTIR_REGISTRY_PATH", Environment.GetEnvironmentVariable("PALANTIR_REGISTRY_PATH")),
+            ("XDG_STATE_HOME",         Environment.GetEnvironmentVariable("XDG_STATE_HOME")),
+        };
+        Environment.SetEnvironmentVariable("PALANTIR_REGISTRY_PATH", null);
+        Environment.SetEnvironmentVariable("XDG_STATE_HOME", null);
+        try
+        {
+            var resolved = PathsResolver.GetRegistryFilePath(new PalantirConfig());
+            // Should NOT live under any "configurations" / dotfiles-style folder;
+            // should be under LocalAppData by default.
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            Assert.StartsWith(local, resolved, StringComparison.OrdinalIgnoreCase);
+            Assert.EndsWith(
+                Path.Combine("Palantir", "state", "registry.json"),
+                resolved,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            foreach (var (k, v) in saved)
+                Environment.SetEnvironmentVariable(k, v);
+        }
+    }
+
+    [Fact]
+    public void PathsResolver_RegistryHonorsXdgStateHome()
+    {
+        var probe = Path.Combine(Path.GetTempPath(), "xdg-state-" + Guid.NewGuid().ToString("N"));
+        var saved = (
+            Reg:   Environment.GetEnvironmentVariable("PALANTIR_REGISTRY_PATH"),
+            State: Environment.GetEnvironmentVariable("XDG_STATE_HOME"));
+        Environment.SetEnvironmentVariable("PALANTIR_REGISTRY_PATH", null);
+        Environment.SetEnvironmentVariable("XDG_STATE_HOME", probe);
+        try
+        {
+            var resolved = PathsResolver.GetRegistryFilePath(new PalantirConfig());
+            Assert.Equal(
+                Path.GetFullPath(Path.Combine(probe, "palantir", "registry.json")),
+                resolved);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PALANTIR_REGISTRY_PATH", saved.Reg);
+            Environment.SetEnvironmentVariable("XDG_STATE_HOME", saved.State);
+        }
+    }
+
+    // ── Slim registry schema ────────────────────────────────────────
+
+    [Fact]
+    public void RegistryEntry_ShortcutPath_ComputedFromDisplayName()
+    {
+        var entry = new RegistryEntry
+        {
+            Name = "opencode",
+            Aumid = "Palantir.opencode",
+            DisplayName = "OpenCode",
+            IconSource = "https://example.com/icon.png",
+            RegisteredAt = DateTimeOffset.Now,
+        };
+
+        // ShortcutPath is computed, not persisted.
+        Assert.EndsWith("OpenCode.lnk", entry.ShortcutPath);
+        Assert.Contains("Start Menu", entry.ShortcutPath);
+    }
+
+    [Fact]
+    public void RegistryEntry_SerializesWithoutShortcutOrIconPath()
+    {
+        var entry = new RegistryEntry
+        {
+            Name = "opencode",
+            Aumid = "Palantir.opencode",
+            DisplayName = "OpenCode",
+            IconSource = "https://example.com/icon.png",
+            RegisteredAt = DateTimeOffset.Parse("2026-04-29T12:00:00Z"),
+        };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(entry);
+        // Slim schema: only logical fields are persisted.
+        Assert.Contains("\"iconSource\":", json);
+        Assert.DoesNotContain("\"shortcut\":", json);
+        Assert.DoesNotContain("\"icon\":", json);
+        Assert.DoesNotContain("\"source\":", json);
+        // ShortcutPath must not leak into JSON.
+        Assert.DoesNotContain("ShortcutPath", json);
+        Assert.DoesNotContain("shortcutPath", json);
+    }
+
+    // ── Built-in default personality ────────────────────────────────
+
+    [Fact]
+    public void PersonalityStore_GetDefaultPersonality_FallsBackToPalantir()
+    {
+        var p = PersonalityStore.GetDefaultPersonality(new PalantirConfig());
+        Assert.Equal("Palantir", p.DisplayName);
+        // Icon may be null — Register() will fall back to the exe icon.
+    }
+
+    [Fact]
+    public void PersonalityStore_GetDefaultPersonality_HonorsConfigOverride()
+    {
+        var config = new PalantirConfig();
+        config.Personalities[PersonalityStore.BuiltInDefaultName] = new Personality
+        {
+            DisplayName = "MyPalantir",
+            Icon = "C:\\custom\\icon.png",
+        };
+
+        var p = PersonalityStore.GetDefaultPersonality(config);
+        Assert.Equal("MyPalantir", p.DisplayName);
+        Assert.Equal("C:\\custom\\icon.png", p.Icon);
+    }
+
+    [Fact]
+    public void PersonalityStore_BuiltInDefaultName_IsPalantir()
+    {
+        Assert.Equal("palantir", PersonalityStore.BuiltInDefaultName);
+    }
 
     private static byte[] MakeMinimalPng(int width, int height)
     {

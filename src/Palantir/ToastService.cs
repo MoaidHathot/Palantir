@@ -871,7 +871,8 @@ public static class ToastService
 
     /// <summary>
     /// Determine the AUMID to use for these options, registering on demand.
-    /// Returns null if no personality is in play (use default notifier).
+    /// Returns null only when registration of the built-in default personality
+    /// fails — callers fall back to the Compat notifier in that case.
     /// </summary>
     private static string? ResolveAndEnsurePersonality(
         ToastOptions options, Action<string>? onWarning)
@@ -887,8 +888,6 @@ public static class ToastService
         if (!string.IsNullOrWhiteSpace(options.DisplayName)
             || !string.IsNullOrWhiteSpace(options.AppIcon))
         {
-            // Use the explicit personality name as a stable handle when given,
-            // else derive one from the display name.
             var name = personalityName
                 ?? options.DisplayName
                 ?? "adhoc";
@@ -900,13 +899,7 @@ public static class ToastService
                         ? PersonalityStore.GetPersonality(personalityName)?.Icon
                         : null),
             };
-            if (string.IsNullOrWhiteSpace(personality.Icon))
-            {
-                onWarning?.Invoke(
-                    $"Warning: --display-name set without --app-icon and no resolvable " +
-                    $"icon for personality \"{name}\". Falling back to default identity.");
-                return null;
-            }
+            // Note: Icon may be null — Register falls back to the exe's embedded icon.
             try
             {
                 var entry = PersonalityStore.Register(name, personality, config, onWarning);
@@ -921,39 +914,68 @@ public static class ToastService
             }
         }
 
-        if (string.IsNullOrWhiteSpace(personalityName))
-            return null;
-
-        var configured = PersonalityStore.GetPersonality(personalityName);
-        if (configured is null)
+        // Explicit --as <name> or config defaultPersonality.
+        if (!string.IsNullOrWhiteSpace(personalityName))
         {
-            onWarning?.Invoke(
-                $"Warning: Personality \"{personalityName}\" not found in config. " +
-                "Use 'palantir personality list' to see available personalities. " +
-                "Falling back to default identity.");
-            return null;
+            var configured = PersonalityStore.GetPersonality(personalityName);
+            if (configured is null)
+            {
+                onWarning?.Invoke(
+                    $"Warning: Personality \"{personalityName}\" not found in config. " +
+                    "Use 'palantir personality list' to see available personalities. " +
+                    "Falling back to default identity.");
+                // fall through to built-in default below
+            }
+            else
+            {
+                try
+                {
+                    return EnsureRegistered(personalityName, configured, config, onWarning);
+                }
+                catch (Exception ex)
+                {
+                    onWarning?.Invoke(
+                        $"Warning: Failed to register personality \"{personalityName}\": {ex.Message}. " +
+                        "Falling back to default identity.");
+                    // fall through to built-in default below
+                }
+            }
         }
 
-        // Lazy register: if shortcut missing or registry entry stale, (re)register.
+        // Built-in default personality. Auto-registered on first use; user can
+        // customize by adding a `personalities.palantir` entry to palantir.json.
         try
         {
-            var aumid = PersonalityStore.ComputeAumid(personalityName, config);
-            var infos = PersonalityStore.List(config);
-            var info = infos.FirstOrDefault(
-                i => i.Name.Equals(personalityName, StringComparison.OrdinalIgnoreCase));
-            if (info is null || !info.RegisteredInWindows)
-            {
-                PersonalityStore.Register(personalityName, configured, config, onWarning);
-            }
-            return aumid;
+            var defaultPersonality = PersonalityStore.GetDefaultPersonality(config);
+            return EnsureRegistered(
+                PersonalityStore.BuiltInDefaultName, defaultPersonality, config, onWarning);
         }
         catch (Exception ex)
         {
             onWarning?.Invoke(
-                $"Warning: Failed to register personality \"{personalityName}\": {ex.Message}. " +
-                "Falling back to default identity.");
+                $"Warning: Failed to register built-in default personality: {ex.Message}. " +
+                "Falling back to system default identity.");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Idempotent register: only re-registers when shortcut is missing or its
+    /// AUMID drifted from what we'd compute now.
+    /// </summary>
+    private static string EnsureRegistered(
+        string name,
+        Personality personality,
+        PalantirConfig config,
+        Action<string>? onWarning)
+    {
+        var aumid = PersonalityStore.ComputeAumid(name, config);
+        var infos = PersonalityStore.List(config);
+        var info = infos.FirstOrDefault(
+            i => i.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (info is null || !info.RegisteredInWindows)
+            PersonalityStore.Register(name, personality, config, onWarning);
+        return aumid;
     }
 }
 

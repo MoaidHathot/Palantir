@@ -623,6 +623,30 @@ This still uses the personality registration mechanism under the hood
 (creating a stable Start Menu shortcut keyed off the display name) so
 subsequent calls with the same `--display-name` are zero-overhead.
 
+### Built-in default personality
+
+Every Palantir invocation that doesn't pass `--as`, `--display-name`/`--app-icon`,
+or hit a `--preset` with `personality` set, automatically uses a built-in
+**`palantir`** personality (display name "Palantir", icon = the Palantir
+executable's embedded icon). It's auto-registered on first use and shown
+in `personality list` as `[built-in,windows]`.
+
+To customize it, just add a `personalities.palantir` entry to your config:
+
+```json
+{
+  "personalities": {
+    "palantir": {
+      "displayName": "My Palantir",
+      "icon": "C:\\path\\to\\custom-icon.png"
+    }
+  }
+}
+```
+
+Bulk operations (`unregister-all`, `prune`, `sync`) deliberately skip the
+built-in default — it would just get auto-recreated on the next toast.
+
 ### Config
 
 ```json
@@ -642,14 +666,62 @@ Edit the JSON freely; run `palantir personality sync` to make Windows match.
 
 ## Cache & File Locations
 
-All caches and the personality registry live in resolvable locations:
+Palantir splits **portable config** from **machine-local state**:
 
-| Path | Default | Override |
-|------|---------|----------|
-| `cache` | `%LocalAppData%\Palantir\cache` | `paths.cache` in config, or `PALANTIR_CACHE_PATH` env |
-| `icons` | `<cache>/icons` | `paths.icons` or `PALANTIR_ICONS_PATH` |
-| `images` | `<cache>/images` | `paths.images` or `PALANTIR_IMAGES_PATH` |
-| `registry` | `<configDir>/registry.json` | `paths.registry` or `PALANTIR_REGISTRY_PATH` |
+| File | Role | Default |
+|------|------|---------|
+| `palantir.json` | Definitions (presets, personalities, paths) | `$XDG_CONFIG_HOME/Palantir` or `%AppData%\Palantir` |
+| `registry.json` | What this Windows install has registered | `$XDG_STATE_HOME/palantir` or `%LocalAppData%\Palantir\state` |
+| Cache (icons, images) | Downloaded/derived artifacts | `$XDG_CACHE_HOME/palantir` or `%LocalAppData%\Palantir\cache` |
+
+You can sync `palantir.json` across machines (it's logical-only); `registry.json` and the cache are recreated automatically on each machine.
+
+### Resolved paths
+
+```bash
+palantir cache path
+```
+
+shows everything resolved on the current host.
+
+### Override with `paths` in `palantir.json`
+
+All keys optional; when set they win. Sub-paths derive from `cache` when not set explicitly.
+
+```json
+{
+  "paths": {
+    "cache":    "${PALANTIR_CONFIG}/cache",
+    "icons":    "${LOCALAPPDATA}/Palantir/icons",
+    "images":   "${XDG_CACHE_HOME}/palantir/images",
+    "registry": "${XDG_STATE_HOME}/palantir/registry.json"
+  }
+}
+```
+
+### Token expansion
+
+Available everywhere a path is accepted (including `personalities.*.icon`):
+
+| Token | Expands to |
+|-------|------------|
+| `${ENV_VAR}` | Process environment value (any name) |
+| `${PALANTIR_CONFIG}` | Resolved config directory |
+| `${PALANTIR_CACHE}` | Resolved cache root |
+| Leading `~` | User profile directory |
+
+`%VAR%` Windows-style env expansion also works (via `Environment.ExpandEnvironmentVariables`).
+
+### Resolution order
+
+| Path | Order (first match wins) |
+|------|--------------------------|
+| Cache | `paths.cache` → `PALANTIR_CACHE_PATH` → `XDG_CACHE_HOME/palantir` → `XDG_CONFIG_HOME/palantir/cache` → `%LocalAppData%\Palantir\cache` |
+| Icons | `paths.icons` → `PALANTIR_ICONS_PATH` → `<cache>/icons` |
+| Images | `paths.images` → `PALANTIR_IMAGES_PATH` → `<cache>/images` |
+| Registry | `paths.registry` → `PALANTIR_REGISTRY_PATH` → `XDG_STATE_HOME/palantir/registry.json` → `%LocalAppData%\Palantir\state\registry.json` |
+
+### Cache management
 
 ```bash
 palantir cache path                 # show resolved paths

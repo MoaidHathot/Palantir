@@ -14,12 +14,18 @@ public static class IconCache
 
     /// <summary>
     /// Resolve <paramref name="source"/> (path or URL) to a local .ico path,
-    /// downloading and converting if necessary.
+    /// downloading and converting if necessary. Tokens like <c>${VAR}</c>,
+    /// <c>${PALANTIR_CONFIG}</c>, <c>${PALANTIR_CACHE}</c>, and a leading
+    /// <c>~</c> are expanded before resolution.
     /// </summary>
     public static string ResolveToIco(string source, PalantirConfig? config = null)
     {
         if (string.IsNullOrWhiteSpace(source))
             throw new ArgumentException("Icon source is empty.", nameof(source));
+
+        // Expand tokens (env vars, ${PALANTIR_CONFIG}, etc.) before deciding
+        // whether the string is a URL or a local path.
+        source = PathsResolver.ExpandValue(source, config);
 
         var iconsDir = PathsResolver.EnsureDirectory(PathsResolver.GetIconsDirectory(config));
 
