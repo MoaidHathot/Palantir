@@ -25,6 +25,7 @@ A hands-on guide to every Palantir feature. Copy-paste these commands to experim
 - [Stdin Pipe Support](#stdin-pipe-support)
 - [Dry Run (Preview XML)](#dry-run-preview-xml)
 - [Shell Completions](#shell-completions)
+- [Styling, Layout & Rich Content](#styling-layout--rich-content)
 - [Real-World Scenarios](#real-world-scenarios)
 
 ---
@@ -708,6 +709,161 @@ palantir completions powershell >> $PROFILE
 # Or evaluate directly in the current session
 palantir completions powershell | Invoke-Expression
 ```
+
+---
+
+## Styling, Layout & Rich Content
+
+Windows toasts can't render arbitrary colors or inline-bold text — that's a
+platform limit. What Palantir gives you is three opt-in tiers of control on
+top of the basics. **Defaults don't change**; everything below is opt-in.
+
+### Per-line text styling
+
+```bash
+# Friendly aliases: header, large, normal, small, dim
+palantir \
+  -t "Backup Complete" --title-style large --title-align center \
+  -m "12 files in 4.2 s" --message-style dim \
+  -b "Next run: 03:00" --body-style small --body-align right
+```
+
+You can also pass any raw toast schema value directly:
+
+```bash
+palantir -t "42" --title-style titleNumeral --title-align center
+```
+
+### Extra text lines
+
+`--extra-text-style` and `--extra-text-align` attach to the **most recent**
+`--extra-text` (left-to-right).
+
+```bash
+palantir -t "Release v2.1.0" \
+  --extra-text "10 fixes, 2 features" --extra-text-style dim \
+  --extra-text "Released today"        --extra-text-align right
+```
+
+### Multi-column / multi-row layout
+
+```bash
+palantir -t "Backup" \
+  --column "text=Started:;style=dim" \
+  --column "text=10:42 AM;align=right" \
+  --column-row \
+  --column "text=Files:;style=dim" \
+  --column "text=1,234;align=right"
+```
+
+For a single row, just omit `--column-row`.
+
+### Full XML control (escape hatches)
+
+```bash
+# A verbatim <text> with any schema attributes
+palantir -t "Score" \
+  --text-raw '<text hint-style="titleNumeral" hint-align="center">42</text>'
+
+# Inject custom XML at any anchor
+palantir -t "Custom" \
+  --xml-anchor actions \
+  --xml-fragment '<action content="Snooze" arguments="snooze" activationType="background"/>'
+
+# Load a fragment from disk
+palantir -t "Custom" --xml-fragment "@./fragment.xml"
+
+# Validate raw XML before sending (CLI off by default; library on by default)
+palantir -t "Score" --validate-xml \
+  --text-raw '<text hint-style="titleNumeral">42</text>'
+```
+
+### Emoji shortcodes (opt-in)
+
+```bash
+palantir --expand-shortcodes \
+  -t ":check: Backup complete" \
+  -m ":warn: Disk almost full (:red_circle: 95%)"
+```
+
+Available codes: `:check:` `:x:` `:warn:` `:info:` `:question:` `:exclamation:`
+`:red_circle:` `:green_circle:` `:yellow_circle:` `:blue_circle:` `:white_circle:`
+`:black_circle:` `:bell:` `:hourglass:` `:rocket:` `:fire:` `:sparkles:` `:lock:`
+`:unlock:` `:tada:` `:wave:` `:gear:` `:wrench:` `:hammer:` `:package:`
+`:floppy_disk:` `:zap:` `:bug:` `:mag:` `:eyes:` `:thumbsup:` `:thumbsdown:`
+`:heart:` `:star:`
+
+To use your own emoji, just put them directly in any text field —
+no flag required.
+
+### What's *not* possible
+
+- Custom RGB/hex text colors
+- Inline `**bold**` / `*italic*` / underline
+- Hyperlinks inside body text
+- HTML / Markdown / XAML
+
+Workaround: use a colored `--hero-image` or `--inline-image` plus emoji.
+
+---
+
+## Personalities (Toast App Identity)
+
+Personalities change the corner icon and app name Windows shows on the toast.
+Register once, switch per toast.
+
+```bash
+# Register
+palantir personality register \
+  --name opencode \
+  --display-name "OpenCode" \
+  --icon https://opencode.ai/apple-touch-icon.png
+
+# Use per-toast
+palantir --as opencode -t "Task complete" -m "Ready for input"
+
+# Or set as default
+palantir personality use --name opencode
+palantir -t "All toasts now branded"   # uses opencode by default
+
+# One-off, no config (still cached)
+palantir --display-name "OpenCode" --app-icon ./opencode.png \
+  -t ":check: Done" -m "Ready"
+```
+
+### Inspecting + lifecycle
+
+```bash
+palantir personality list             # config + Windows state
+palantir personality register-all     # warm everything in config
+palantir personality sync             # reconcile both directions
+palantir personality sync --dry-run   # preview without changes
+palantir personality prune --yes      # remove stale Windows entries only
+palantir personality unregister-all   # nuke all (with confirmation)
+palantir personality unregister --name opencode --keep-history
+palantir personality delete --name opencode   # remove from config only
+```
+
+### Cache & paths
+
+```bash
+palantir cache path                   # show resolved directories
+palantir cache clear --icons --yes    # clear icon cache
+```
+
+Override locations in `palantir.json`:
+
+```json
+{
+  "paths": {
+    "cache": "D:\\palantir-cache",
+    "icons": "D:\\palantir-cache\\icons"
+  }
+}
+```
+
+Or via env vars: `PALANTIR_CACHE_PATH`, `PALANTIR_ICONS_PATH`,
+`PALANTIR_IMAGES_PATH`, `PALANTIR_REGISTRY_PATH`.
 
 ---
 

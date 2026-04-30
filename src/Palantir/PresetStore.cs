@@ -5,6 +5,42 @@ using System.Text.Json.Serialization;
 namespace Palantir;
 
 /// <summary>
+/// Per-personality branding (corner icon + app name shown by Windows on the toast).
+/// </summary>
+public sealed class Personality
+{
+    /// <summary>Display name shown next to the corner icon.</summary>
+    [JsonPropertyName("displayName")]
+    public string? DisplayName { get; set; }
+
+    /// <summary>
+    /// Path or URL to the icon. PNG, JPG, or ICO accepted; non-ICO is converted
+    /// and cached on first registration.
+    /// </summary>
+    [JsonPropertyName("icon")]
+    public string? Icon { get; set; }
+}
+
+/// <summary>
+/// Optional path overrides. All keys optional; defaults derive from <c>cache</c>
+/// (or built-in defaults).
+/// </summary>
+public sealed class PalantirPaths
+{
+    [JsonPropertyName("cache")]
+    public string? Cache { get; set; }
+
+    [JsonPropertyName("icons")]
+    public string? Icons { get; set; }
+
+    [JsonPropertyName("images")]
+    public string? Images { get; set; }
+
+    [JsonPropertyName("registry")]
+    public string? Registry { get; set; }
+}
+
+/// <summary>
 /// Root configuration file model. Extensible — add new top-level properties
 /// alongside <see cref="Presets"/> for future configuration needs.
 /// </summary>
@@ -12,6 +48,23 @@ public sealed class PalantirConfig
 {
     [JsonPropertyName("presets")]
     public Dictionary<string, ToastOptions> Presets { get; set; } = new();
+
+    [JsonPropertyName("personalities")]
+    public Dictionary<string, Personality> Personalities { get; set; } = new();
+
+    /// <summary>Default personality applied when --as is not specified.</summary>
+    [JsonPropertyName("defaultPersonality")]
+    public string? DefaultPersonality { get; set; }
+
+    /// <summary>
+    /// Prefix for derived AUMIDs. Default "Palantir". All bulk operations
+    /// (sync/prune/unregister-all) only act on AUMIDs sharing this prefix.
+    /// </summary>
+    [JsonPropertyName("aumidPrefix")]
+    public string? AumidPrefix { get; set; }
+
+    [JsonPropertyName("paths")]
+    public PalantirPaths? Paths { get; set; }
 }
 
 /// <summary>
@@ -103,16 +156,39 @@ public static class PresetStore
 
         // Serialize with clean preset representation (no empty arrays)
         var root = new JsonObject();
-        var presetsNode = new JsonObject();
 
+        if (!string.IsNullOrWhiteSpace(config.AumidPrefix))
+            root["aumidPrefix"] = config.AumidPrefix;
+        if (!string.IsNullOrWhiteSpace(config.DefaultPersonality))
+            root["defaultPersonality"] = config.DefaultPersonality;
+
+        if (config.Paths is not null && HasAnyPath(config.Paths))
+        {
+            root["paths"] = JsonSerializer.SerializeToNode(config.Paths, WriteOptions);
+        }
+
+        if (config.Personalities.Count > 0)
+        {
+            var personalitiesNode = new JsonObject();
+            foreach (var (name, p) in config.Personalities)
+                personalitiesNode[name] = JsonSerializer.SerializeToNode(p, WriteOptions);
+            root["personalities"] = personalitiesNode;
+        }
+
+        var presetsNode = new JsonObject();
         foreach (var (name, opts) in config.Presets)
             presetsNode[name] = CleanSerialize(opts);
-
         root["presets"] = presetsNode;
 
         var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(path, json);
     }
+
+    private static bool HasAnyPath(PalantirPaths paths) =>
+        !string.IsNullOrWhiteSpace(paths.Cache) ||
+        !string.IsNullOrWhiteSpace(paths.Icons) ||
+        !string.IsNullOrWhiteSpace(paths.Images) ||
+        !string.IsNullOrWhiteSpace(paths.Registry);
 
     // ── Preset CRUD ─────────────────────────────────────────────────
 
@@ -266,6 +342,49 @@ public static class PresetStore
         if (!explicitOptions.Contains("selections") && preset.Selections is { Length: > 0 }
             && target.Selections is { Length: 0 })
             target.Selections = preset.Selections;
+
+        // ── Styling fields (string?) ────────────────────────────────
+        if (!explicitOptions.Contains("titleStyle") && preset.TitleStyle is not null)
+            target.TitleStyle ??= preset.TitleStyle;
+        if (!explicitOptions.Contains("titleAlign") && preset.TitleAlign is not null)
+            target.TitleAlign ??= preset.TitleAlign;
+        if (!explicitOptions.Contains("messageStyle") && preset.MessageStyle is not null)
+            target.MessageStyle ??= preset.MessageStyle;
+        if (!explicitOptions.Contains("messageAlign") && preset.MessageAlign is not null)
+            target.MessageAlign ??= preset.MessageAlign;
+        if (!explicitOptions.Contains("bodyStyle") && preset.BodyStyle is not null)
+            target.BodyStyle ??= preset.BodyStyle;
+        if (!explicitOptions.Contains("bodyAlign") && preset.BodyAlign is not null)
+            target.BodyAlign ??= preset.BodyAlign;
+
+        // ── Bool fields (preset can only turn on, not off) ──────────
+        if (!explicitOptions.Contains("expandShortcodes") && preset.ExpandShortcodes)
+            target.ExpandShortcodes = true;
+        // Note: ValidateXml defaults to true; we don't merge a preset's true
+        // value (no-op) and a preset can't turn it off via merge — users who
+        // want CLI validation off do not enable it.
+
+        // ── List fields (merge only when target is empty) ──────────
+        if (!explicitOptions.Contains("extraTexts") && preset.ExtraTexts.Count > 0
+            && target.ExtraTexts.Count == 0)
+            target.ExtraTexts = preset.ExtraTexts;
+        if (!explicitOptions.Contains("groups") && preset.Groups.Count > 0
+            && target.Groups.Count == 0)
+            target.Groups = preset.Groups;
+        if (!explicitOptions.Contains("rawTextElements") && preset.RawTextElements.Count > 0
+            && target.RawTextElements.Count == 0)
+            target.RawTextElements = preset.RawTextElements;
+        if (!explicitOptions.Contains("xmlFragments") && preset.XmlFragments.Count > 0
+            && target.XmlFragments.Count == 0)
+            target.XmlFragments = preset.XmlFragments;
+
+        // ── Personality fields ─────────────────────────────────────
+        if (!explicitOptions.Contains("personality") && preset.Personality is not null)
+            target.Personality ??= preset.Personality;
+        if (!explicitOptions.Contains("displayName") && preset.DisplayName is not null)
+            target.DisplayName ??= preset.DisplayName;
+        if (!explicitOptions.Contains("appIcon") && preset.AppIcon is not null)
+            target.AppIcon ??= preset.AppIcon;
     }
 
     // ── Display helpers ─────────────────────────────────────────────
@@ -336,6 +455,9 @@ public static class PresetStore
             // Remove fields that shouldn't be persisted in presets
             obj.Remove("preset");
             obj.Remove("dryRun");
+            // ValidateXml defaults to true; persisting it adds noise.
+            if (opts.ValidateXml)
+                obj.Remove("validateXml");
         }
         return node!;
     }

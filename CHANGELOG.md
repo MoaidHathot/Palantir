@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Personalities** — Per-toast app identity (the corner icon and app name Windows shows on every toast). Configure named personalities in `palantir.json`; switch per invocation with `--as <name>` or set a default via `palantir personality use --name <name>`. One-off overrides via `--display-name` and `--app-icon` (path or URL; PNG/JPG auto-converted to ICO and cached). Lazy auto-registration on first use; subsequent toasts are zero-overhead.
+- **`personality` subcommand tree** — `register`, `unregister`, `list`, `register-all`, `unregister-all`, `sync`, `prune`, `use`, `delete` for full lifecycle management.
+- **`cache` subcommand** — `cache path` shows resolved cache directories; `cache clear [--icons|--images]` empties them.
+- **Configurable file locations** — New `paths` section in `palantir.json` (`cache`, `icons`, `images`, `registry`) with environment-variable fallbacks (`PALANTIR_CACHE_PATH`, `PALANTIR_ICONS_PATH`, etc.). Sub-paths derive from `cache` when not set explicitly.
+- **`aumidPrefix` config** — Custom AUMID namespace for branded forks; bulk operations only act on AUMIDs sharing the prefix.
+- **Per-line text styling** — `--title-style`, `--message-style`, `--body-style` and matching `*-align` options accept friendly aliases (`header`, `large`, `normal`, `small`, `dim`) or any raw toast schema value (e.g. `titleNumeral`, `baseSubtle`)
+- **`--extra-text`** — Append additional text lines beyond title/message/body; per-line `--extra-text-style` and `--extra-text-align` apply to the most recent `--extra-text`
+- **Multi-column / multi-row layout** — `--column "text=...;style=...;align=..."` (repeatable) builds `<group>`/`<subgroup>` rich layouts; `--column-row` separates rows
+- **Full XML escape hatches** — `--text-raw` injects a verbatim `<text>` element; `--xml-fragment` (with `--xml-anchor binding|actions|toast`) injects arbitrary XML at any anchor; `@path` syntax loads fragments from disk
+- **`--validate-xml`** — Opt-in raw XML schema validation in the CLI (library defaults to validating)
+- **`--expand-shortcodes`** — Opt-in GitHub-style emoji shortcode expansion (`:check:` → ✅) across all text fields; ~35 curated codes
+- **Library API parity** — All new CLI flags have matching properties on `ToastOptions` (`TitleStyle`, `ExtraTexts`, `Groups`, `RawTextElements`, `XmlFragments`, `ValidateXml`, `ExpandShortcodes`); presets persist these too
 - **`remove` subcommand** — Remove specific toasts by `--tag` or `--group` from notification history
 - **`update` subcommand** — Update an existing toast's progress bar data without showing a new toast
 - **`history` subcommand** — List active toast notifications with their tags, groups, and content

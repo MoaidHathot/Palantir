@@ -23,8 +23,8 @@
     <Description>A CLI tool for showing Windows Toast Notifications with rich content support including images, buttons, audio, progress bars, and more.</Description>
     <PackageTags>toast;notification;windows;cli;tool</PackageTags>
     <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/MoaidHath/Palantir</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/MoaidHath/Palantir</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/MoaidHathot/Palantir</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/MoaidHathot/Palantir</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 

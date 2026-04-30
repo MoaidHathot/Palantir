@@ -142,6 +142,73 @@ var jsonOption = new Option<string?>("--json")
 var versionOption = new Option<bool>("--version")
 { Description = "Show version information" };
 
+// ── Styling (per-line) ──────────────────────────────────────────────
+
+var titleStyleOption = new Option<string?>("--title-style")
+{ Description = "Title style: header, large, normal, small, dim (or raw schema value)" };
+
+var titleAlignOption = new Option<string?>("--title-align")
+{ Description = "Title alignment: left, center, right" };
+
+var messageStyleOption = new Option<string?>("--message-style")
+{ Description = "Message style: header, large, normal, small, dim (or raw schema value)" };
+
+var messageAlignOption = new Option<string?>("--message-align")
+{ Description = "Message alignment: left, center, right" };
+
+var bodyStyleOption = new Option<string?>("--body-style")
+{ Description = "Body style: header, large, normal, small, dim (or raw schema value)" };
+
+var bodyAlignOption = new Option<string?>("--body-align")
+{ Description = "Body alignment: left, center, right" };
+
+// ── Extra Text Lines ────────────────────────────────────────────────
+
+var extraTextOption = new Option<string[]>("--extra-text")
+{ Description = "Append an extra text line (repeatable)" };
+
+var extraTextStyleOption = new Option<string[]>("--extra-text-style")
+{ Description = "Style for the most recent --extra-text" };
+
+var extraTextAlignOption = new Option<string[]>("--extra-text-align")
+{ Description = "Alignment for the most recent --extra-text" };
+
+// ── Columns / Groups (rich layout) ──────────────────────────────────
+
+var columnOption = new Option<string[]>("--column")
+{ Description = "Add a column. Spec: \"text=Value;style=dim;align=right\". Repeatable." };
+
+var columnRowOption = new Option<bool>("--column-row")
+{ Description = "Start a new row of columns (separator between --column groups)" };
+
+// ── Escape Hatches (full XML control) ───────────────────────────────
+
+var textRawOption = new Option<string[]>("--text-raw")
+{ Description = "Append a verbatim <text> XML element. Repeatable. Advanced." };
+
+var xmlFragmentOption = new Option<string[]>("--xml-fragment")
+{ Description = "Inject raw XML at the current --xml-anchor. Use \"@path\" to load from file. Advanced." };
+
+var xmlAnchorOption = new Option<string[]>("--xml-anchor")
+{ Description = "Anchor for following --xml-fragment(s): binding (default), actions, toast" };
+
+var validateXmlOption = new Option<bool>("--validate-xml")
+{ Description = "Validate raw XML before sending (CLI off by default; on by default in library)" };
+
+var expandShortcodesOption = new Option<bool>("--expand-shortcodes")
+{ Description = "Expand emoji shortcodes (e.g. :check: → ✅) in all text fields" };
+
+// ── Personality (toast app identity) ────────────────────────────────
+
+var asOption = new Option<string?>("--as")
+{ Description = "Use a configured personality (corner icon + app name)" };
+
+var displayNameOption = new Option<string?>("--display-name")
+{ Description = "One-off override for the corner app name (implies ad-hoc personality)" };
+
+var appIconOption = new Option<string?>("--app-icon")
+{ Description = "One-off override for the corner app icon (file path or URL)" };
+
 // ── Output ─────────────────────────────────────────────────────────
 
 var quietOption = new Option<bool>("--quiet", "-q")
@@ -162,6 +229,14 @@ var rootCommand = new RootCommand("Palantir - Windows Toast Notification CLI too
     launchUriOption, onClickOption,
     presetOption, waitOption, timeoutOption, formatOption, replaceOption,
     dryRunOption, jsonOption, versionOption,
+    titleStyleOption, titleAlignOption,
+    messageStyleOption, messageAlignOption,
+    bodyStyleOption, bodyAlignOption,
+    extraTextOption, extraTextStyleOption, extraTextAlignOption,
+    columnOption, columnRowOption,
+    textRawOption, xmlFragmentOption, xmlAnchorOption,
+    validateXmlOption, expandShortcodesOption,
+    asOption, displayNameOption, appIconOption,
     quietOption,
 };
 
@@ -328,9 +403,17 @@ completionsCommand.SetAction(parseResult =>
                     '--launch', '--on-click',
                     '--preset', '--wait', '--timeout', '--format', '--replace',
                     '--dry-run', '--json', '--version',
+                    '--title-style', '--title-align',
+                    '--message-style', '--message-align',
+                    '--body-style', '--body-align',
+                    '--extra-text', '--extra-text-style', '--extra-text-align',
+                    '--column', '--column-row',
+                    '--text-raw', '--xml-fragment', '--xml-anchor',
+                    '--validate-xml', '--expand-shortcodes',
+                    '--as', '--display-name', '--app-icon',
                     '-q', '--quiet'
                 )
-                $subcommands = @('clear', 'remove', 'update', 'completions', 'preset', 'history', 'test')
+                $subcommands = @('clear', 'remove', 'update', 'completions', 'preset', 'history', 'test', 'personality', 'cache')
                 $all = $options + $subcommands
 
                 $all | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
@@ -597,6 +680,332 @@ testCommand.SetAction(parseResult =>
 });
 rootCommand.Subcommands.Add(testCommand);
 
+// ── Personality subcommand ──────────────────────────────────────────
+
+var personalityCommand = new Command("personality")
+{ Description = "Manage personalities (toast app identity: corner icon + name)" };
+
+// personality register --name X --display-name Y --icon Z
+var pRegisterCmd = new Command("register")
+{ Description = "Register a personality with Windows (also writes to config)" };
+var pRegNameOpt = new Option<string>("--name") { Description = "Personality name", Required = true };
+var pRegDisplayOpt = new Option<string>("--display-name") { Description = "App name shown on the toast", Required = true };
+var pRegIconOpt = new Option<string>("--icon") { Description = "Icon (file path or URL)", Required = true };
+pRegisterCmd.Options.Add(pRegNameOpt);
+pRegisterCmd.Options.Add(pRegDisplayOpt);
+pRegisterCmd.Options.Add(pRegIconOpt);
+pRegisterCmd.SetAction(parseResult =>
+{
+    var name = parseResult.GetValue(pRegNameOpt)!;
+    var personality = new Personality
+    {
+        DisplayName = parseResult.GetValue(pRegDisplayOpt),
+        Icon = parseResult.GetValue(pRegIconOpt),
+    };
+    var quiet = parseResult.GetValue(quietOption);
+
+    try
+    {
+        PersonalityStore.SavePersonality(name, personality);
+        var entry = PersonalityStore.Register(name, personality);
+        if (!quiet)
+            Console.WriteLine(
+                $"Registered \"{name}\" → AUMID={entry.Aumid}, shortcut={entry.Shortcut}");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+});
+personalityCommand.Subcommands.Add(pRegisterCmd);
+
+// personality unregister --name X [--keep-history] [--keep-shortcut]
+var pUnregisterCmd = new Command("unregister")
+{ Description = "Remove a personality's Windows registration (does not edit config)" };
+var pUnregNameOpt = new Option<string>("--name") { Description = "Personality name", Required = true };
+var pUnregKeepHistOpt = new Option<bool>("--keep-history")
+{ Description = "Preserve Action Center history for this personality" };
+var pUnregKeepShortcutOpt = new Option<bool>("--keep-shortcut")
+{ Description = "Do not delete the Start Menu shortcut" };
+pUnregisterCmd.Options.Add(pUnregNameOpt);
+pUnregisterCmd.Options.Add(pUnregKeepHistOpt);
+pUnregisterCmd.Options.Add(pUnregKeepShortcutOpt);
+pUnregisterCmd.SetAction(parseResult =>
+{
+    var name = parseResult.GetValue(pUnregNameOpt)!;
+    var quiet = parseResult.GetValue(quietOption);
+    try
+    {
+        var ok = PersonalityStore.Unregister(
+            name,
+            keepHistory: parseResult.GetValue(pUnregKeepHistOpt),
+            keepShortcut: parseResult.GetValue(pUnregKeepShortcutOpt));
+        if (!quiet) Console.WriteLine(ok
+            ? $"Unregistered \"{name}\"."
+            : $"No registration found for \"{name}\".");
+        if (!ok) Environment.ExitCode = 1;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+});
+personalityCommand.Subcommands.Add(pUnregisterCmd);
+
+// personality list
+var pListCmd = new Command("list") { Description = "List personalities (config + Windows state)" };
+pListCmd.SetAction(parseResult =>
+{
+    var infos = PersonalityStore.List();
+    if (infos.Count == 0)
+    {
+        Console.WriteLine("No personalities defined.");
+        Console.WriteLine($"Config:   {PresetStore.GetConfigFilePath()}");
+        Console.WriteLine($"Registry: {PathsResolver.GetRegistryFilePath()}");
+        return;
+    }
+
+    foreach (var i in infos)
+    {
+        var states = new List<string>();
+        if (i.InConfig) states.Add("config");
+        if (i.RegisteredInWindows) states.Add("windows");
+        if (!i.InConfig && i.RegisteredInWindows) states.Add("STALE");
+        if (i.InConfig && !i.RegisteredInWindows) states.Add("not-registered");
+        var stateStr = string.Join(",", states);
+        Console.WriteLine(
+            $"  {i.Name,-16} {i.DisplayName ?? "-",-20} aumid={i.Aumid,-30} [{stateStr}]");
+    }
+    Console.WriteLine();
+    Console.WriteLine($"Config:   {PresetStore.GetConfigFilePath()}");
+    Console.WriteLine($"Registry: {PathsResolver.GetRegistryFilePath()}");
+});
+personalityCommand.Subcommands.Add(pListCmd);
+
+// personality register-all
+var pRegAllCmd = new Command("register-all")
+{ Description = "Register all personalities defined in palantir.json" };
+pRegAllCmd.SetAction(parseResult =>
+{
+    var quiet = parseResult.GetValue(quietOption);
+    var entries = PersonalityStore.RegisterAll(
+        onWarning: msg => Console.Error.WriteLine(msg));
+    if (!quiet) Console.WriteLine($"Registered {entries.Count} personality(ies).");
+});
+personalityCommand.Subcommands.Add(pRegAllCmd);
+
+// personality unregister-all [--yes] [--keep-history]
+var pUnregAllCmd = new Command("unregister-all")
+{ Description = "Unregister all Palantir-managed personalities from Windows" };
+var pUnregAllYesOpt = new Option<bool>("--yes")
+{ Description = "Skip confirmation prompt" };
+var pUnregAllKeepHistOpt = new Option<bool>("--keep-history")
+{ Description = "Preserve Action Center history" };
+pUnregAllCmd.Options.Add(pUnregAllYesOpt);
+pUnregAllCmd.Options.Add(pUnregAllKeepHistOpt);
+pUnregAllCmd.SetAction(parseResult =>
+{
+    var quiet = parseResult.GetValue(quietOption);
+    if (!parseResult.GetValue(pUnregAllYesOpt))
+    {
+        Console.Write("Unregister all Palantir personalities? [y/N]: ");
+        var ans = Console.ReadLine();
+        if (string.IsNullOrWhiteSpace(ans)
+            || !ans.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("Cancelled.");
+            return;
+        }
+    }
+    var n = PersonalityStore.UnregisterAll(
+        keepHistory: parseResult.GetValue(pUnregAllKeepHistOpt),
+        onWarning: msg => Console.Error.WriteLine(msg));
+    if (!quiet) Console.WriteLine($"Unregistered {n} personality(ies).");
+});
+personalityCommand.Subcommands.Add(pUnregAllCmd);
+
+// personality sync [--yes] [--keep-history] [--dry-run]
+var pSyncCmd = new Command("sync")
+{ Description = "Reconcile config ↔ Windows: register missing, unregister stale" };
+var pSyncYesOpt = new Option<bool>("--yes")
+{ Description = "Skip confirmation prompt for stale removals" };
+var pSyncKeepHistOpt = new Option<bool>("--keep-history")
+{ Description = "Preserve Action Center history when removing stale entries" };
+var pSyncDryRunOpt = new Option<bool>("--dry-run")
+{ Description = "Show what would change without modifying anything" };
+pSyncCmd.Options.Add(pSyncYesOpt);
+pSyncCmd.Options.Add(pSyncKeepHistOpt);
+pSyncCmd.Options.Add(pSyncDryRunOpt);
+pSyncCmd.SetAction(parseResult =>
+{
+    var quiet = parseResult.GetValue(quietOption);
+
+    if (parseResult.GetValue(pSyncDryRunOpt))
+    {
+        var infos = PersonalityStore.List();
+        var toReg = infos.Where(i => i.InConfig && !i.RegisteredInWindows).ToList();
+        var toUnreg = infos.Where(i => !i.InConfig && i.RegisteredInWindows).ToList();
+        Console.WriteLine($"Would register {toReg.Count}: {string.Join(", ", toReg.Select(i => i.Name))}");
+        Console.WriteLine($"Would unregister {toUnreg.Count}: {string.Join(", ", toUnreg.Select(i => i.Name))}");
+        return;
+    }
+
+    var stale = PersonalityStore.List().Where(i => !i.InConfig && i.RegisteredInWindows).ToList();
+    if (stale.Count > 0 && !parseResult.GetValue(pSyncYesOpt))
+    {
+        Console.Write($"Sync will unregister {stale.Count} stale entry(ies). Continue? [y/N]: ");
+        var ans = Console.ReadLine();
+        if (string.IsNullOrWhiteSpace(ans)
+            || !ans.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("Cancelled.");
+            return;
+        }
+    }
+
+    var (reg, unreg) = PersonalityStore.Sync(
+        keepHistory: parseResult.GetValue(pSyncKeepHistOpt),
+        onWarning: msg => Console.Error.WriteLine(msg));
+    if (!quiet) Console.WriteLine($"Synced: registered {reg}, unregistered {unreg}.");
+});
+personalityCommand.Subcommands.Add(pSyncCmd);
+
+// personality prune [--yes] [--keep-history]
+var pPruneCmd = new Command("prune")
+{ Description = "Remove Windows entries no longer in config" };
+var pPruneYesOpt = new Option<bool>("--yes") { Description = "Skip confirmation" };
+var pPruneKeepHistOpt = new Option<bool>("--keep-history") { Description = "Preserve Action Center history" };
+pPruneCmd.Options.Add(pPruneYesOpt);
+pPruneCmd.Options.Add(pPruneKeepHistOpt);
+pPruneCmd.SetAction(parseResult =>
+{
+    var quiet = parseResult.GetValue(quietOption);
+    if (!parseResult.GetValue(pPruneYesOpt))
+    {
+        Console.Write("Prune all stale Palantir personalities? [y/N]: ");
+        var ans = Console.ReadLine();
+        if (string.IsNullOrWhiteSpace(ans)
+            || !ans.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("Cancelled.");
+            return;
+        }
+    }
+    var n = PersonalityStore.Prune(
+        keepHistory: parseResult.GetValue(pPruneKeepHistOpt),
+        onWarning: msg => Console.Error.WriteLine(msg));
+    if (!quiet) Console.WriteLine($"Pruned {n} personality(ies).");
+});
+personalityCommand.Subcommands.Add(pPruneCmd);
+
+// personality use --name X
+var pUseCmd = new Command("use")
+{ Description = "Set the default personality (used when --as is not specified)" };
+var pUseNameOpt = new Option<string?>("--name")
+{ Description = "Personality name, or omit to clear default" };
+pUseCmd.Options.Add(pUseNameOpt);
+pUseCmd.SetAction(parseResult =>
+{
+    var quiet = parseResult.GetValue(quietOption);
+    var config = PresetStore.LoadConfig();
+    var name = parseResult.GetValue(pUseNameOpt);
+    config.DefaultPersonality = string.IsNullOrWhiteSpace(name) ? null : name;
+    PresetStore.SaveConfig(config);
+    if (!quiet) Console.WriteLine(name is null
+        ? "Default personality cleared."
+        : $"Default personality set to \"{name}\".");
+});
+personalityCommand.Subcommands.Add(pUseCmd);
+
+// personality delete --name X
+var pDeleteCmd = new Command("delete")
+{ Description = "Delete a personality from config (does not unregister from Windows; run sync to clean up)" };
+var pDelNameOpt = new Option<string>("--name") { Description = "Personality name", Required = true };
+pDeleteCmd.Options.Add(pDelNameOpt);
+pDeleteCmd.SetAction(parseResult =>
+{
+    var quiet = parseResult.GetValue(quietOption);
+    var name = parseResult.GetValue(pDelNameOpt)!;
+    if (!PersonalityStore.DeletePersonality(name))
+    {
+        Console.Error.WriteLine($"Error: personality \"{name}\" not found in config.");
+        Environment.ExitCode = 1;
+        return;
+    }
+    if (!quiet) Console.WriteLine(
+        $"Deleted \"{name}\" from config. Run 'palantir personality sync' or " +
+        $"'palantir personality unregister --name {name}' to remove from Windows.");
+});
+personalityCommand.Subcommands.Add(pDeleteCmd);
+
+rootCommand.Subcommands.Add(personalityCommand);
+
+// ── Cache subcommand ────────────────────────────────────────────────
+
+var cacheCommand = new Command("cache") { Description = "Manage Palantir caches (icons, images)" };
+
+var cachePathCmd = new Command("path") { Description = "Print resolved cache directories" };
+cachePathCmd.SetAction(_ =>
+{
+    Console.WriteLine($"cache:    {PathsResolver.GetCacheDirectory()}");
+    Console.WriteLine($"icons:    {PathsResolver.GetIconsDirectory()}");
+    Console.WriteLine($"images:   {PathsResolver.GetImagesDirectory()}");
+    Console.WriteLine($"registry: {PathsResolver.GetRegistryFilePath()}");
+});
+cacheCommand.Subcommands.Add(cachePathCmd);
+
+var cacheClearCmd = new Command("clear") { Description = "Clear cache (default: everything)" };
+var cacheClearIconsOpt = new Option<bool>("--icons") { Description = "Clear only the icons cache" };
+var cacheClearImagesOpt = new Option<bool>("--images") { Description = "Clear only the images cache" };
+var cacheClearYesOpt = new Option<bool>("--yes") { Description = "Skip confirmation prompt" };
+cacheClearCmd.Options.Add(cacheClearIconsOpt);
+cacheClearCmd.Options.Add(cacheClearImagesOpt);
+cacheClearCmd.Options.Add(cacheClearYesOpt);
+cacheClearCmd.SetAction(parseResult =>
+{
+    var quiet = parseResult.GetValue(quietOption);
+    var onlyIcons = parseResult.GetValue(cacheClearIconsOpt);
+    var onlyImages = parseResult.GetValue(cacheClearImagesOpt);
+    var both = !onlyIcons && !onlyImages;
+
+    var label = (onlyIcons, onlyImages, both) switch
+    {
+        (true, false, _) => "icons cache",
+        (false, true, _) => "images cache",
+        _ => "all caches",
+    };
+
+    if (!parseResult.GetValue(cacheClearYesOpt))
+    {
+        Console.Write($"Clear {label}? [y/N]: ");
+        var ans = Console.ReadLine();
+        if (string.IsNullOrWhiteSpace(ans)
+            || !ans.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("Cancelled.");
+            return;
+        }
+    }
+
+    var total = 0;
+    if (onlyIcons || both) total += IconCache.Clear();
+    if (onlyImages || both)
+    {
+        var dir = PathsResolver.GetImagesDirectory();
+        if (Directory.Exists(dir))
+        {
+            total += Directory.GetFiles(dir).Length;
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+    if (!quiet) Console.WriteLine($"Cleared {label} ({total} file(s)).");
+});
+cacheCommand.Subcommands.Add(cacheClearCmd);
+
+rootCommand.Subcommands.Add(cacheCommand);
+
 // ── Root handler ────────────────────────────────────────────────────
 
 rootCommand.SetAction(parseResult =>
@@ -844,7 +1253,7 @@ return config.Invoke(args);
 
 ToastOptions BuildOptionsFromCli(ParseResult parseResult)
 {
-    return new ToastOptions
+    var options = new ToastOptions
     {
         Title = parseResult.GetValue(titleOption),
         Message = parseResult.GetValue(messageOption),
@@ -879,7 +1288,22 @@ ToastOptions BuildOptionsFromCli(ParseResult parseResult)
         Wait = parseResult.GetValue(waitOption),
         Timeout = parseResult.GetValue(timeoutOption),
         DryRun = parseResult.GetValue(dryRunOption),
+        TitleStyle = parseResult.GetValue(titleStyleOption),
+        TitleAlign = parseResult.GetValue(titleAlignOption),
+        MessageStyle = parseResult.GetValue(messageStyleOption),
+        MessageAlign = parseResult.GetValue(messageAlignOption),
+        BodyStyle = parseResult.GetValue(bodyStyleOption),
+        BodyAlign = parseResult.GetValue(bodyAlignOption),
+        // CLI default: validation OFF for performance; --validate-xml flips it on.
+        ValidateXml = parseResult.GetValue(validateXmlOption),
+        ExpandShortcodes = parseResult.GetValue(expandShortcodesOption),
+        Personality = parseResult.GetValue(asOption),
+        DisplayName = parseResult.GetValue(displayNameOption),
+        AppIcon = parseResult.GetValue(appIconOption),
     };
+
+    ApplyOrderedRichOptions(options, parseResult);
+    return options;
 }
 
 void OverrideFromCli(ToastOptions options, ParseResult parseResult)
@@ -978,6 +1402,133 @@ void OverrideFromCli(ToastOptions options, ParseResult parseResult)
     var cliTimeout = parseResult.GetValue(timeoutOption);
     if (cliTimeout.HasValue) options.Timeout = cliTimeout;
     if (parseResult.GetValue(dryRunOption)) options.DryRun = true;
+
+    // ── Styling overrides ──────────────────────────────────────
+    var cliTitleStyle = parseResult.GetValue(titleStyleOption);
+    if (cliTitleStyle is not null) options.TitleStyle = cliTitleStyle;
+    var cliTitleAlign = parseResult.GetValue(titleAlignOption);
+    if (cliTitleAlign is not null) options.TitleAlign = cliTitleAlign;
+    var cliMsgStyle = parseResult.GetValue(messageStyleOption);
+    if (cliMsgStyle is not null) options.MessageStyle = cliMsgStyle;
+    var cliMsgAlign = parseResult.GetValue(messageAlignOption);
+    if (cliMsgAlign is not null) options.MessageAlign = cliMsgAlign;
+    var cliBodyStyle = parseResult.GetValue(bodyStyleOption);
+    if (cliBodyStyle is not null) options.BodyStyle = cliBodyStyle;
+    var cliBodyAlign = parseResult.GetValue(bodyAlignOption);
+    if (cliBodyAlign is not null) options.BodyAlign = cliBodyAlign;
+
+    // --validate-xml: CLI flag forces it on (overrides JSON-loaded false).
+    if (parseResult.GetValue(validateXmlOption)) options.ValidateXml = true;
+    if (parseResult.GetValue(expandShortcodesOption)) options.ExpandShortcodes = true;
+
+    var cliAs = parseResult.GetValue(asOption);
+    if (cliAs is not null) options.Personality = cliAs;
+    var cliDisplayName = parseResult.GetValue(displayNameOption);
+    if (cliDisplayName is not null) options.DisplayName = cliDisplayName;
+    var cliAppIcon = parseResult.GetValue(appIconOption);
+    if (cliAppIcon is not null) options.AppIcon = cliAppIcon;
+
+    // For list-style rich options: if user provided any on the CLI, REPLACE
+    // the JSON-loaded equivalents (mirrors how Buttons/Inputs/Selections behave).
+    if (parseResult.GetValue(extraTextOption) is { Length: > 0 })
+        options.ExtraTexts.Clear();
+    if (parseResult.GetValue(columnOption) is { Length: > 0 })
+        options.Groups.Clear();
+    if (parseResult.GetValue(textRawOption) is { Length: > 0 })
+        options.RawTextElements.Clear();
+    if (parseResult.GetValue(xmlFragmentOption) is { Length: > 0 })
+        options.XmlFragments.Clear();
+
+    // Append ordered rich options (extra-text, columns, raw, fragments).
+    ApplyOrderedRichOptions(options, parseResult);
+}
+
+void ApplyOrderedRichOptions(ToastOptions options, ParseResult parseResult)
+{
+    // Walk parsed tokens in order to honor positional semantics:
+    //   --extra-text X --extra-text-style dim     → style attaches to X
+    //   --column a --column b --column-row --column c   → row 1 = [a,b], row 2 = [c]
+    //   --xml-anchor actions --xml-fragment ...    → fragment anchored to actions
+    var tokens = parseResult.Tokens;
+    TextLine? currentExtra = null;
+    List<TextLine>? currentRow = null;
+    var anchor = XmlAnchor.Binding;
+
+    string? Next(int i) => i + 1 < tokens.Count ? tokens[i + 1].Value : null;
+
+    for (var i = 0; i < tokens.Count; i++)
+    {
+        switch (tokens[i].Value)
+        {
+            case "--extra-text":
+                currentExtra = new TextLine { Text = Next(i) ?? "" };
+                options.ExtraTexts.Add(currentExtra);
+                break;
+            case "--extra-text-style":
+                if (currentExtra is not null) currentExtra.Style = Next(i);
+                break;
+            case "--extra-text-align":
+                if (currentExtra is not null) currentExtra.Align = Next(i);
+                break;
+            case "--column":
+                currentRow ??= new List<TextLine>();
+                currentRow.Add(ParseColumnSpec(Next(i) ?? ""));
+                break;
+            case "--column-row":
+                if (currentRow is { Count: > 0 })
+                {
+                    options.Groups.Add(currentRow);
+                    currentRow = null;
+                }
+                break;
+            case "--text-raw":
+                options.RawTextElements.Add(Next(i) ?? "");
+                break;
+            case "--xml-anchor":
+                var anchorVal = (Next(i) ?? "binding").Trim().ToLowerInvariant();
+                anchor = anchorVal switch
+                {
+                    "actions" => XmlAnchor.Actions,
+                    "toast"   => XmlAnchor.Toast,
+                    _         => XmlAnchor.Binding,
+                };
+                break;
+            case "--xml-fragment":
+                var arg = Next(i) ?? "";
+                if (arg.StartsWith('@'))
+                {
+                    var path = arg[1..];
+                    if (!File.Exists(path))
+                        throw new FileNotFoundException(
+                            $"--xml-fragment file not found: \"{path}\"");
+                    arg = File.ReadAllText(path);
+                }
+                options.XmlFragments.Add(new XmlFragment { Fragment = arg, Anchor = anchor });
+                break;
+        }
+    }
+
+    if (currentRow is { Count: > 0 })
+        options.Groups.Add(currentRow);
+}
+
+TextLine ParseColumnSpec(string spec)
+{
+    var line = new TextLine();
+    foreach (var pair in spec.Split(';'))
+    {
+        var eq = pair.IndexOf('=');
+        if (eq <= 0) continue;
+        var key = pair[..eq].Trim();
+        var val = pair[(eq + 1)..].Trim();
+        switch (key.ToLowerInvariant())
+        {
+            case "text":  line.Text = val; break;
+            case "style": line.Style = val; break;
+            case "align": line.Align = val; break;
+        }
+    }
+    return line;
 }
 
 HashSet<string> GetExplicitOptions(ParseResult parseResult)
@@ -1022,6 +1573,24 @@ HashSet<string> GetExplicitOptions(ParseResult parseResult)
     if (parseResult.GetValue(buttonOption) is { Length: > 0 }) explicit_.Add("buttons");
     if (parseResult.GetValue(inputOption) is { Length: > 0 }) explicit_.Add("inputs");
     if (parseResult.GetValue(selectionOption) is { Length: > 0 }) explicit_.Add("selections");
+
+    // New rich/styling options
+    if (parseResult.GetValue(titleStyleOption) is not null) explicit_.Add("titleStyle");
+    if (parseResult.GetValue(titleAlignOption) is not null) explicit_.Add("titleAlign");
+    if (parseResult.GetValue(messageStyleOption) is not null) explicit_.Add("messageStyle");
+    if (parseResult.GetValue(messageAlignOption) is not null) explicit_.Add("messageAlign");
+    if (parseResult.GetValue(bodyStyleOption) is not null) explicit_.Add("bodyStyle");
+    if (parseResult.GetValue(bodyAlignOption) is not null) explicit_.Add("bodyAlign");
+    if (parseResult.GetValue(validateXmlOption)) explicit_.Add("validateXml");
+    if (parseResult.GetValue(expandShortcodesOption)) explicit_.Add("expandShortcodes");
+    if (parseResult.GetValue(extraTextOption) is { Length: > 0 }) explicit_.Add("extraTexts");
+    if (parseResult.GetValue(columnOption) is { Length: > 0 }) explicit_.Add("groups");
+    if (parseResult.GetValue(textRawOption) is { Length: > 0 }) explicit_.Add("rawTextElements");
+    if (parseResult.GetValue(xmlFragmentOption) is { Length: > 0 }) explicit_.Add("xmlFragments");
+
+    if (parseResult.GetValue(asOption) is not null) explicit_.Add("personality");
+    if (parseResult.GetValue(displayNameOption) is not null) explicit_.Add("displayName");
+    if (parseResult.GetValue(appIconOption) is not null) explicit_.Add("appIcon");
 
     return explicit_;
 }

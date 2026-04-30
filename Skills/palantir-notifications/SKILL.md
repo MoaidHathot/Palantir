@@ -235,6 +235,149 @@ palantir -t "PR merged" --header-id "github" --header-title "GitHub"
 | Launch URI | `palantir -t "Click me" --launch "https://example.com"` |
 | Version | `palantir --version` |
 
+## Styling, Layout & Rich Content
+
+Windows toasts cannot render arbitrary text colors, inline bold/italic, or
+hyperlinks inside text — these are platform limits. Three opt-in tiers exist;
+defaults are unchanged.
+
+### Tier 1 — Per-line styling
+
+```bash
+palantir -t "Done" --title-style large --title-align center \
+                   -m "subtle note" --message-style dim
+```
+
+| Friendly alias | Schema value |
+|----------------|--------------|
+| `header`       | `header`     |
+| `large`        | `title`      |
+| `normal`       | `base`       |
+| `small`        | `caption`    |
+| `dim`          | `baseSubtle` |
+
+Raw schema values (e.g. `titleNumeral`, `subheaderSubtle`) are also accepted.
+Alignment: `left`, `center`, `right`.
+
+### Tier 1.5 — Extra text lines
+
+```bash
+palantir -t "Title" \
+  --extra-text "Line 4" --extra-text-style dim \
+  --extra-text "Line 5" --extra-text-align right
+```
+
+Each `--extra-text-style` / `--extra-text-align` attaches to the most recent
+`--extra-text` (left-to-right ordering).
+
+### Tier 2 — Multi-column / multi-row layout
+
+```bash
+palantir -t "Backup" \
+  --column "text=Started:;style=dim" --column "text=10:42 AM;align=right" \
+  --column-row \
+  --column "text=Files:;style=dim"   --column "text=1,234;align=right"
+```
+
+Spec format: `;`-separated `key=value` pairs (`text`, `style`, `align`).
+`--column-row` separates rows; omit for a single-row layout.
+
+### Tier 3 — Full XML control
+
+```bash
+# Verbatim <text> element
+palantir -t "Score" \
+  --text-raw '<text hint-style="titleNumeral" hint-align="center">42</text>'
+
+# Inject XML at any anchor (binding default, actions, toast)
+palantir -t "Custom" --xml-anchor actions \
+  --xml-fragment '<action content="X" arguments="x" activationType="foreground"/>'
+
+# Load from file
+palantir -t "Custom" --xml-fragment "@./fragment.xml"
+```
+
+Add `--validate-xml` to enable schema validation in the CLI (off by default
+for speed; library `ToastOptions.ValidateXml` defaults true).
+
+### Color: emoji shortcodes (opt-in)
+
+```bash
+palantir --expand-shortcodes -t ":check: Done" -m ":warn: Heads-up"
+```
+
+Built-in codes: `:check:` `:x:` `:warn:` `:info:` `:question:` `:exclamation:`
+`:red_circle:` `:green_circle:` `:yellow_circle:` `:blue_circle:`
+`:white_circle:` `:black_circle:` `:bell:` `:hourglass:` `:rocket:` `:fire:`
+`:sparkles:` `:lock:` `:unlock:` `:tada:` `:wave:` `:gear:` `:wrench:`
+`:hammer:` `:package:` `:floppy_disk:` `:zap:` `:bug:` `:mag:` `:eyes:`
+`:thumbsup:` `:thumbsdown:` `:heart:` `:star:`. Unknown codes are left
+literal. To use other emoji, place them directly in the text (no flag needed).
+
+### What is NOT possible
+
+- Custom RGB/hex text colors
+- Inline `**bold**` / `*italic*` / underline
+- Hyperlinks inside body text
+- HTML / Markdown / XAML rendering
+
+Workaround for "color": colored hero/inline image plus emoji.
+
+## Personalities (Toast App Identity)
+
+Each toast has a corner icon + app name (controlled by Windows AUMID).
+Personalities let you switch them per-toast.
+
+```bash
+# Register a personality (auto on first use, or explicit)
+palantir personality register --name opencode \
+  --display-name "OpenCode" --icon path-or-url
+
+# Per-toast
+palantir --as opencode -t "..."
+
+# Set default
+palantir personality use --name opencode
+
+# One-off
+palantir --display-name "X" --app-icon path -t "..."
+```
+
+| Command | Effect |
+|---------|--------|
+| `personality list` | config + Windows state |
+| `personality register-all` | register everything in config |
+| `personality sync [--dry-run]` | reconcile both directions |
+| `personality prune` | remove stale Windows entries |
+| `personality unregister-all` | remove all (with `--yes` to skip prompt) |
+| `personality delete --name X` | config-only removal |
+
+Lifecycle flags: `--yes` (skip prompt), `--keep-history` (preserve Action
+Center history), `--keep-shortcut` (advanced).
+
+## Cache & Paths
+
+`paths` section in `palantir.json` (all keys optional):
+```json
+{
+  "paths": {
+    "cache":    "D:\\palantir-cache",
+    "icons":    "D:\\palantir-cache\\icons",
+    "images":   "D:\\palantir-cache\\images",
+    "registry": "D:\\palantir-cache\\registry.json"
+  }
+}
+```
+
+Defaults: `%LocalAppData%\Palantir\cache` (icons/images derived from it),
+`<configDir>\registry.json`. Env-var overrides: `PALANTIR_CACHE_PATH`,
+`PALANTIR_ICONS_PATH`, `PALANTIR_IMAGES_PATH`, `PALANTIR_REGISTRY_PATH`.
+
+| Command | Effect |
+|---------|--------|
+| `cache path` | print resolved directories |
+| `cache clear [--icons|--images]` | empty caches (does NOT unregister personalities) |
+
 ## Common Patterns
 
 ### CI/CD build result

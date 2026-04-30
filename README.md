@@ -435,6 +435,231 @@ Generate tab-completion scripts for your shell:
 palantir completions powershell >> $PROFILE
 ```
 
+## Styling, Layout & Rich Content
+
+Windows toast notifications cannot render arbitrary colors, inline bold/italic,
+or hyperlinks inside text — these are platform limitations, not Palantir's.
+What you *can* do is layer three opt-in tiers of styling on top of the basics.
+**All defaults are unchanged**; everything below is opt-in.
+
+### Tier 1 — Per-line styling
+
+Apply a `hint-style` and `hint-align` to any of the three top-level text lines.
+
+```bash
+palantir \
+  -t  "Backup complete" --title-style large  --title-align center \
+  -m  "12 files in 4.2 s" --message-style dim \
+  -b  "Next run at 03:00" --body-style small --body-align right
+```
+
+Friendly aliases (case-insensitive):
+
+| Alias    | Schema value (what is emitted) |
+|----------|---------------------------------|
+| `header` | `header`                        |
+| `large`  | `title`                         |
+| `normal` | `base`                          |
+| `small`  | `caption`                       |
+| `dim`    | `baseSubtle`                    |
+
+You can also pass the raw schema value directly (e.g. `--title-style titleNumeral`,
+`--message-style subheaderSubtle`). Anything in the toast schema's hint-style
+catalog is accepted as-is.
+
+Alignment accepts `left`, `center`, `right`.
+
+### Tier 1.5 — Extra text lines
+
+Append additional `<text>` lines beyond title/message/body. Each `--extra-text-style`
+and `--extra-text-align` flag attaches to the **most recent** `--extra-text`.
+
+```bash
+palantir -t "Release notes" \
+  --extra-text "v2.1.0" \
+  --extra-text "10 fixes, 2 features" --extra-text-style dim \
+  --extra-text "Released today"        --extra-text-align right
+```
+
+### Tier 2 — Multi-column / multi-row layout
+
+Use `--column` (repeatable) for columns and `--column-row` to start a new row.
+A column spec is `;`-separated `key=value` pairs:
+
+```bash
+palantir -t "Backup" \
+  --column "text=Started:;style=dim" \
+  --column "text=10:42 AM;align=right" \
+  --column-row \
+  --column "text=Files:;style=dim" \
+  --column "text=1,234;align=right"
+```
+
+(For a single row of columns, omit `--column-row` entirely.)
+
+### Tier 3 — Full XML control (escape hatches)
+
+When the friendly options aren't enough, drop down to raw XML:
+
+```bash
+# Append a <text> verbatim with any schema attributes
+palantir -t "Score" \
+  --text-raw '<text hint-style="titleNumeral" hint-align="center">42</text>'
+
+# Inject any element into <binding>, <actions>, or <toast>
+palantir -t "Custom" \
+  --xml-anchor actions \
+  --xml-fragment '<action content="Custom" arguments="x" activationType="foreground"/>'
+
+# Load a fragment from disk
+palantir -t "Custom" --xml-fragment "@./fragment.xml"
+```
+
+`--xml-anchor` defaults to `binding` and applies to all subsequent
+`--xml-fragment` flags until the next `--xml-anchor`.
+
+By default the CLI does **not** validate raw XML (for speed); pass
+`--validate-xml` to surface clear errors before sending. The library API
+defaults the other way (`ValidateXml = true`).
+
+### Color: emoji shortcodes (opt-in)
+
+You can put emoji directly in any text field (`-t "✅ Done"`). For
+script-friendly authoring, the `--expand-shortcodes` flag enables
+GitHub-style codes:
+
+```bash
+palantir --expand-shortcodes \
+  -t ":check: Backup complete" \
+  -m ":warn: Disk almost full (:red_circle: 95%)"
+```
+
+Built-in shortcodes (curated set, hard-coded):
+
+`:check:` `:x:` `:warn:` `:warning:` `:info:` `:question:` `:exclamation:`
+`:red_circle:` `:green_circle:` `:yellow_circle:` `:blue_circle:`
+`:white_circle:` `:black_circle:` `:bell:` `:hourglass:` `:rocket:`
+`:fire:` `:sparkles:` `:lock:` `:unlock:` `:tada:` `:wave:` `:gear:`
+`:wrench:` `:hammer:` `:package:` `:floppy_disk:` `:zap:` `:bug:`
+`:mag:` `:eyes:` `:thumbsup:` `:thumbsdown:` `:heart:` `:star:`
+
+Unknown codes are left as literal text. The shortcode dictionary is
+hard-coded; to use your own emoji, place them directly in the text.
+
+### What's *not* possible (platform limits)
+
+Windows toasts will silently ignore — or outright reject — these things,
+regardless of how Palantir tries:
+
+- Custom RGB / hex colors on text.
+- Inline `**bold**` / `*italic*` / underline / strike inside a text line.
+- Hyperlinks embedded inside body text.
+- HTML / Markdown / XAML rendering.
+- Coloring the toast background (Windows controls that; it follows the system accent).
+
+The standard workaround is a colored hero/inline image (`--hero-image`,
+`--inline-image`) plus emoji.
+
+## Personalities (Toast App Identity)
+
+Every Windows toast carries an icon and app name in the top corner —
+this is the *app* sending the toast (e.g. "Palantir"), set per-application
+via Windows' AUMID + Start Menu shortcut mechanism. Palantir lets you define
+named **personalities** that switch the corner icon and name **per-toast**.
+
+```bash
+# Register a personality (creates Start Menu shortcut + writes config)
+palantir personality register \
+  --name opencode \
+  --display-name "OpenCode" \
+  --icon https://opencode.ai/apple-touch-icon.png
+
+# Use it on any toast
+palantir --as opencode -t "Task complete" -m "Ready for input"
+
+# Or set as default for all toasts
+palantir personality use --name opencode
+```
+
+Now every `palantir --as opencode …` (or just `palantir …` if it's the
+default) shows up in the Action Center labeled "OpenCode" with the OpenCode
+icon at the corner.
+
+### How registration works
+
+- Personalities defined in `palantir.json` auto-register on first use
+  (~50–100 ms first time, zero overhead after).
+- Each personality gets a derived AUMID (`<aumidPrefix>.<name>`) and a
+  Start Menu shortcut. Defaults to `Palantir.<name>`; override with
+  `aumidPrefix` in config.
+- PNG/JPG icons (local or HTTP) are auto-converted to ICO and cached.
+
+### Lifecycle commands
+
+| Command | Effect |
+|---------|--------|
+| `palantir personality register --name X --display-name Y --icon Z` | Register one (also writes to config) |
+| `palantir personality unregister --name X` | Remove from Windows (config untouched) |
+| `palantir personality delete --name X` | Remove from config (Windows untouched) |
+| `palantir personality list` | Show config + Windows state side by side |
+| `palantir personality register-all` | Register everything from config (idempotent) |
+| `palantir personality unregister-all` | Remove all Palantir-managed registrations |
+| `palantir personality sync` | Reconcile config ↔ Windows in both directions |
+| `palantir personality prune` | Remove Windows entries no longer in config |
+| `palantir personality use --name X` | Set default personality |
+
+`unregister-all`, `sync`, and `prune` accept `--yes` (skip confirmation),
+`--keep-history` (preserve Action Center entries), and `--dry-run`
+(`sync` only).
+
+### One-off overrides (no config required)
+
+```bash
+palantir --display-name "OpenCode" --app-icon ./opencode.png \
+  -t ":check: Done" -m "Ready"
+```
+
+This still uses the personality registration mechanism under the hood
+(creating a stable Start Menu shortcut keyed off the display name) so
+subsequent calls with the same `--display-name` are zero-overhead.
+
+### Config
+
+```json
+{
+  "aumidPrefix": "Palantir",
+  "defaultPersonality": "opencode",
+  "personalities": {
+    "opencode": {
+      "displayName": "OpenCode",
+      "icon": "C:\\path\\to\\opencode.ico"
+    }
+  }
+}
+```
+
+Edit the JSON freely; run `palantir personality sync` to make Windows match.
+
+## Cache & File Locations
+
+All caches and the personality registry live in resolvable locations:
+
+| Path | Default | Override |
+|------|---------|----------|
+| `cache` | `%LocalAppData%\Palantir\cache` | `paths.cache` in config, or `PALANTIR_CACHE_PATH` env |
+| `icons` | `<cache>/icons` | `paths.icons` or `PALANTIR_ICONS_PATH` |
+| `images` | `<cache>/images` | `paths.images` or `PALANTIR_IMAGES_PATH` |
+| `registry` | `<configDir>/registry.json` | `paths.registry` or `PALANTIR_REGISTRY_PATH` |
+
+```bash
+palantir cache path                 # show resolved paths
+palantir cache clear                # clear icons + images (with confirmation)
+palantir cache clear --icons --yes  # targeted clear, no prompt
+```
+
+`cache clear` does **not** unregister personalities — those live in Windows.
+Run `palantir personality unregister-all` if you also want to remove them.
+
 ## Kitchen Sink Example
 
 A complex toast combining multiple features:
@@ -497,6 +722,30 @@ Options:
   --dry-run                Output toast XML without displaying
   --json                   Load options from JSON file (use "-" for stdin)
   --version                Show version information
+
+  Styling, layout & rich content (all opt-in):
+  --title-style            Title hint-style (alias or schema value)
+  --title-align            Title alignment: left, center, right
+  --message-style          Message hint-style
+  --message-align          Message alignment
+  --body-style             Body hint-style
+  --body-align             Body alignment
+  --extra-text             Append a text line (repeatable)
+  --extra-text-style       Style for the most recent --extra-text
+  --extra-text-align       Alignment for the most recent --extra-text
+  --column                 Column spec "text=...;style=...;align=..." (repeatable)
+  --column-row             Start a new row of columns
+  --text-raw               Append a verbatim <text> XML element (repeatable)
+  --xml-fragment           Inject raw XML at --xml-anchor (use "@path" for file)
+  --xml-anchor             binding (default), actions, or toast
+  --validate-xml           Validate raw XML before sending
+  --expand-shortcodes      Expand emoji shortcodes (:check: → ✅, etc.)
+
+  Personality (toast app identity):
+  --as <name>              Use a configured personality
+  --display-name <name>    One-off override for corner app name
+  --app-icon <path|url>    One-off override for corner app icon
+
   -q, --quiet              Suppress informational output
 
 Commands:
@@ -504,6 +753,8 @@ Commands:
   remove                   Remove specific toasts (--tag or --group)
   update                   Update an existing toast's progress data
   preset                   Manage presets (save, list, show, delete)
+  personality              Manage personalities (register, list, sync, etc.)
+  cache                    Manage cache directories (path, clear)
   history                  List active toast notifications
   test                     Send a test notification
   completions              Generate shell completion scripts
